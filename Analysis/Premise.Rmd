@@ -1,0 +1,124 @@
+---
+title: "Premise Exploration"
+author: "Your Name"
+date: "2023-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+```
+
+Idea: Esepecially for generalist pollinators, whether two species actually interact or not may be pretty dependent on environmental context. As such, let's try to use SDM approaches trained on pollinator distributions, plant distributions, and their interactions to show the differences! Maybe the level of overlap is related to the diet breadth of the pollinator or plant? IDK-could be cool!
+
+To test this we need spatially-explicit species interaction data. I found a random dataset to start messing with this with in North and South Dakota from USGS; https://www.sciencebase.gov/catalog/item/5f076d2082ce21d4c3fb7426
+
+```{r}
+dat <- read.csv("NPWRC_only_PollinatorLibraryData04.15.2020.csv")
+```
+
+```{r}
+table(table(dat$Insect_Scientific_Name, dat$Plant_Scientific_Name))
+```
+
+```{r}
+
+count(dat$Pollinator_Library_ID)
+dat2 <- dat %>% group_by(., Insect_Scientific_Name, Plant_Scientific_Name) %>% summarise(., interactioncount=n())
+```
+
+Potential species?
+Long-horned bee: Melissodes trinodis
+Maximillion's Sunflower: Helianthus maximiliani
+
+39 interaction records with each other
+Bee has 109 total
+Flower has 168 total
+
+```{r}
+length(dat$Insect_Scientific_Name[dat$Insect_Scientific_Name%in%"Melissodes trinodis"])
+length(dat$Plant_Scientific_Name[dat$Plant_Scientific_Name%in%"Helianthus maximiliani"])
+```
+
+
+Let's create some ENMs for these
+
+```{r}
+library(rgbif)
+library(maps)
+library(terra)
+library(raster)
+library(usmap)
+```
+
+
+```{r}
+maps::map('state', border=TRUE)
+points(y=dat$Latitude, x=dat$Longitude, 
+   pch=16, col=adjustcolor('dodgerblue', 0.25))
+```
+
+
+
+```{r}
+MelHel <- dplyr::filter(dat, Insect_Scientific_Name %in% "Melissodes trinodis" & Plant_Scientific_Name %in% "Helianthus maximiliani")
+
+Mel <- dplyr::filter(dat, Insect_Scientific_Name %in% "Melissodes trinodis" & Plant_Scientific_Name != "Helianthus maximiliani")
+
+Hel <- dplyr::filter(dat, Insect_Scientific_Name != "Melissodes trinodis" & Plant_Scientific_Name %in% "Helianthus maximiliani")
+
+
+maps::map('state', border=TRUE)
+points(y=Mel$Latitude, x=Mel$Longitude, 
+   pch=16, col=adjustcolor('gold', 0.25))
+points(y=Hel$Latitude, x=Hel$Longitude, 
+   pch=16, col=adjustcolor('darkgreen', 0.25))
+points(y=MelHel$Latitude, x=MelHel$Longitude, 
+   pch=16, col=adjustcolor('firebrick', 1))
+```
+
+
+```{r}
+
+# Lat/Lon of Sioux Falls, SD
+test_data <- data.frame(lon = -96.70, lat = 43.55)
+
+
+MelHelTrans <- MelHel[,c("Latitude","Longitude")]
+colnames(MelHelTrans) <- c("lat","lon")
+MelHelTrans <- usmap_transform(MelHelTrans)
+
+MelTrans <- Mel[,c("Latitude","Longitude")]
+colnames(MelTrans) <- c("lat","lon")
+MelTrans <- usmap_transform(MelTrans)
+
+HelTrans <- Hel[,c("Latitude","Longitude")]
+colnames(HelTrans) <- c("lat","lon")
+HelTrans <- usmap_transform(HelTrans)
+
+  
+plot_usmap(include = c("SD","ND", "MN")) +
+  labs(title = "The Dakotas")+
+  geom_point(data=MelTrans, aes(y=y, x=x), color="red", alpha=0.5, size=3)+
+  geom_point(data=HelTrans, aes(y=y, x=x), color="darkgreen", alpha=0.5, size=3)+
+  geom_point(data=MelHelTrans, aes(y=y, x=x), color="black", size=3.5)+
+  geom_point(data=MelHelTrans, aes(y=y, x=x), color="gold", size=3)
+
+```
+
+
+
+
+
+
+
+
+
+
+
