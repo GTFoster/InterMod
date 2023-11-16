@@ -1,0 +1,79 @@
+---
+title: "Draft_Analysis"
+author: "Your Name"
+date: "2023-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Web of life's probably a good intial data source to test this question with. 
+
+```{r}
+library(rjson) 
+library(tidyverse)
+```
+
+Quering the web of life API. 
+Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
+```{r}
+# define the base url
+base_url <- "https://www.web-of-life.es/"   
+json_url2 <- paste0(base_url,"get_networks.php?interaction_type=Pollination") 
+
+WolPols <- jsonlite::fromJSON(json_url2)
+length(unique(WolPols$network_name)) # 166 Networks
+```
+
+Downloading the metaData
+```{r}
+WolMeta <- read.csv(paste0(base_url,"get_network_info.php"))
+# show results 
+head(WolMeta) # %>% formattable()
+colnames(WolMeta)
+
+WolMeta <- WolMeta %>% dplyr::filter(., network_type%in%"Pollination")
+length(unique(WolMeta$network_name))
+
+table(unique(WolPols$network_name)%in%WolMeta$network_name)
+table(WolMeta$region)
+```
+
+Join american networks of pollinators with their spatial metadata
+```{r}
+amPol <- WolMeta %>% dplyr::select(., network_name, region, latitude, longitude) %>% left_join(WolPols, ., by="network_name") %>% dplyr::filter(., region=="Americas")
+```
+
+
+```{r}
+length(unique(amPol$network_name))
+table(amPol$species1 %in% amPol$species2) 
+
+
+amPlants <- amPol %>% dplyr::select(., network_name, species1) %>% unique() #All the unique plant-site combinations in us
+amPollinators <- amPol %>% dplyr::select(., network_name, species2) %>% unique() #All the unique poll-site combinations in us
+
+sum(table(rowSums(table(amPlants$species1, amPlants$network_name))))-sum(table(rowSums(table(amPlants$species1, amPlants$network_name)))[1:5])
+sum(table(rowSums(table(amPollinators$species2, amPollinators$network_name))))-sum(table(rowSums(table(amPollinators$species2, amPollinators$network_name)))[1:5])
+```
+Out of the 166 pollination networks web of life has in the Americas, there are only 29 plant species and 63 pollinator species that occur at 6 or more sites.
+
+Let's check out Mangal and see if we can get some more points
+```{r}
+library(rmangal)
+```
+
+4499	4529	
+```{r}
+mgs <- rmangal::search_datasets("pollinator")
+mgn <- get_collection(mgs)
+
+nodes <- mgn[[1]]$nodes
+mgn[[1]]$interactions
+mgn[[1]]$network
+
+summary(mgn)[[1]]
+```
+
