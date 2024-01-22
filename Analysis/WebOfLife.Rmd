@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Web of life's probably a good intial data source to test this question with. 
+Web of life's probably a good initial data source to test this question with. 
 
 ```{r}
 library(rjson) 
@@ -75,5 +75,100 @@ mgn[[1]]$interactions
 mgn[[1]]$network
 
 summary(mgn)[[1]]
+
+#save(mgn, amPol, file="data/Mangel_Wol_Query.Rda")
 ```
 
+```{r}
+load("data/Mangel_Wol_Query.Rda")
+```
+
+
+I want to try and make a simple SDM that's trained on some aspect of community data. 
+
+First, let's look at how many networks form Mangel have overlapping species. 
+```{r}
+
+cols <- colnames(mgn[[1]]$nodes)[1:18] #Just match the basic columns that all networks should have (extra "taxonomy" col in some to exclude, if not others)
+
+mgnNodes <- NULL
+for(i in 1:length(mgn)){
+  temp <- mgn[[i]]$nodes %>% dplyr::select(., all_of(cols))
+  mgnNodes <- rbind(mgnNodes, temp)
+}
+
+(length(unique(mgnNodes$network_id)))==324 #Check we actually have all the networks 
+```
+
+```{r}
+MangelCounts <- mgnNodes %>% dplyr::group_by(., taxonomy.id) %>% dplyr::summarise(., networks=length(unique(network_id)))
+
+mgnNodes$original_name[mgnNodes$taxonomy.id%in% 5038][1]
+```
+
+
+
+*Lasioglossum incompletum* is a solitary sweat bee that occurs in 136 of the reported Mangel networks. Let's find its most common partners
+```{r}
+LiNets <- dplyr::filter(mgnNodes, taxonomy.name=="Lasioglossum incompletum") %>% dplyr::select(., network_id) %>% unique()
+```
+Problem: The nodes df in the mangeldata query says *L. incompletum* should occur in network 1364, but when I actually look in that network it isn't recorded. Not sure what's up with this. 
+
+
+Let's try again with the second most common species, *Halictus tripartitus*
+
+Figured it out. A species can be recorded in a network without actually have been recorded engaging in an interaction.
+```{r}
+HtNets <- dplyr::filter(mgnNodes, taxonomy.name=="Halictus tripartitus") %>% dplyr::select(., network_id) %>% unique()
+
+#These are different
+x <- mgn[[8]]$interactions 
+y <- mgn[[8]]$nodes
+```
+
+Node id is at the individual level, not the taxa level :(
+Need to match them up
+
+The code below does that. 
+```{r}
+cols <- c(colnames(mgn[[1]]$interactions)[1:6],"network_id")
+
+mgnInt <- NULL
+for(i in 1:length(mgn)){
+  temp <- mgn[[i]]$interactions %>% dplyr::select(., all_of(cols))
+  mgnInt <- rbind(mgnInt, temp)
+}
+
+mgnInt <- mgnInt %>% dplyr::rename(., node_from=node_id)
+
+
+
+mgnInt <- dplyr::select(mgnNodes, node_id, taxonomy.id, taxonomy.name) %>% dplyr::rename(., node_from=node_id, taxonomy.id.from=taxonomy.id, taxonomy.name.from=taxonomy.name) %>% left_join(mgnInt, ., by="node_from") #Adding the node_from taxa ID
+
+mgnInt <- dplyr::select(mgnNodes, node_id, taxonomy.id, taxonomy.name) %>% dplyr::rename(., node_to=node_id, taxonomy.id.to=taxonomy.id, taxonomy.name.to=taxonomy.name) %>% left_join(mgnInt, ., by="node_to") #Adding the node_from taxa ID
+
+mgnInt$InterID <- paste(mgnInt$taxonomy.id.from, mgnInt$taxonomy.id.to, sep="-") #Make a column identifying unique from-to combinations
+```
+
+Now la
+```{r}
+mgIntTaxaFil <- mgnInt %>% dplyr::filter(., grepl("NA", InterID)==FALSE)
+
+InterMangelCounts <- mgIntTaxaFil %>% dplyr::group_by(., InterID) %>% dplyr::summarise(., networks=length(unique(network_id)))
+
+```
+
+Most common interaction, a morning glory called field bindweed (*Convolvulus arvensis*) and a sweat bee (*Lasioglossum incompletum*). This occurs in 103 networks. 
+
+#############################################################################################3
+START HERE: The above chunk and below ones don't agree. Figure it out bud
+
+```{r}
+length(unique(mgIntTaxaFil$network_id[mgIntTaxaFil$taxonomy.id.to==5038 & mgIntTaxaFil$taxonomy.id.from!=5031])) #Number of networks including the bee but don't include the morning glory
+
+length(unique(mgIntTaxaFil$network_id[mgIntTaxaFil$taxonomy.id.from==5031 & mgIntTaxaFil$taxonomy.id.to!=5038])) #Number of networks including the morning glory but not the bee
+```
+
+
+############################################################## START HERE:
+Make a simple model
