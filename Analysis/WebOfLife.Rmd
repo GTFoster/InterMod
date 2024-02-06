@@ -66,11 +66,11 @@ library(rmangal)
 ```
 
 4499	4529	
-```{r}
-mgs <- rmangal::search_datasets("pollinator")
-mgn <- get_collection(mgs)
+```{r eval=FALSE}
+#mgs <- rmangal::search_datasets("pollinator")
+#mgn <- get_collection(mgs)
 
-nodes <- mgn[[1]]$nodes
+nodes <- mgn[[1000]]
 mgn[[1]]$interactions
 mgn[[1]]$network
 
@@ -139,8 +139,6 @@ for(i in 1:length(mgn)){
   mgnInt <- rbind(mgnInt, temp)
 }
 
-mgnInt <- mgnInt %>% dplyr::rename(., node_from=node_id)
-
 
 
 mgnInt <- dplyr::select(mgnNodes, node_id, taxonomy.id, taxonomy.name) %>% dplyr::rename(., node_from=node_id, taxonomy.id.from=taxonomy.id, taxonomy.name.from=taxonomy.name) %>% left_join(mgnInt, ., by="node_from") #Adding the node_from taxa ID
@@ -172,3 +170,83 @@ length(unique(mgIntTaxaFil$network_id[mgIntTaxaFil$taxonomy.id.from==5031 & mgIn
 
 ############################################################## START HERE:
 Make a simple model
+
+```{r}
+LasI <- mgIntTaxaFil %>% dplyr::filter(., taxonomy.name.from=="Lasioglossum incompletum" | taxonomy.name.to == "Lasioglossum incompletum") #Some data sources flop the to and from, so need to filter by both
+length(unique(LasI$network_id))
+
+ConA <- mgIntTaxaFil %>% dplyr::filter(., taxonomy.name.from=="Convolvulus arvensis" | taxonomy.name.to == "Convolvulus arvensis")
+length(unique(ConA$network_id))
+```
+
+From the mangal vignette; querying the spatial data of the datasets. 
+```{r}
+library(sf)
+library(mapview)
+# assuming sf and mapview are is loaded (as we did above)
+mg_poll_sf <- search_datasets(query = 'pollinator') %>% get_collection(as_sf = TRUE)
+class(mg_poll_sf[[1]]$network)
+#> [1] "sf"         "data.frame"
+```
+
+
+```{r}
+spatialIDs <- NULL
+for(i in 1:length(mg_poll_sf)){
+  spatialIDs <- rbind(spatialIDs, mg_poll_sf[[i]]$network$network_id)
+}
+
+```
+
+################## START HERE: I feel like this code should extract the geometry, but it seems like its not working. Need to fix
+```{r}
+geoms <- list()
+for(i in length(mg_poll_sf)){
+  if(mg_poll_sf[[i]]$network$network_id %in% unique(ConA$network_id)==TRUE){
+    print("True")
+    geoms[[i]]$netID <- mg_poll_sf[[i]]$network$network_id
+    geoms[[i]]$geom <- mg_poll_sf[[i]]$network$geom
+    browser()
+  }
+  else{
+    geoms[[i]] <- "not present"
+    next
+  }
+}
+
+geoms[[1]]
+```
+
+```{r}
+library(ENMTML)
+```
+
+```{r}
+ENMTML(
+  pred_dir,
+  proj_dir = NULL,
+  result_dir = NULL,
+  occ_file,
+  sp,
+  x,
+  y,
+  min_occ = 10,
+  thin_occ = NULL,
+  eval_occ = NULL,
+  colin_var = NULL,
+  imp_var = FALSE,
+  sp_accessible_area = NULL,
+  pseudoabs_method,
+  pres_abs_ratio = 1,
+  part,
+  save_part = FALSE,
+  save_final = TRUE,
+  algorithm,
+  thr,
+  msdm = NULL,
+  ensemble = NULL,
+  extrapolation = FALSE,
+  cores = 1
+)
+```
+
