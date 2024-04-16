@@ -1,0 +1,226 @@
+---
+title: "Frugivory Dataset - Bello et al."
+author: "Grant Foster"
+date: "2024-04-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(raster)
+library(tidyverse)
+library(terra)
+library(tidyterra)
+library(ENMTML)
+library(rgbif)
+```
+
+
+```{r}
+dat <- read.csv("../Data/ATLANTIC_frugivory.csv")
+dat <- dplyr::filter(dat, is.na(Latitude)==FALSE)
+```
+
+```{r}
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+bioclim_brazil <- geodata::worldclim_country(country="Brazil", var = "bio",res = 0.5, path = "data/")
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+ggplot(data = world) +
+    geom_sf()+theme_classic()+geom_point(data=dat, aes(x=Latitude, y=Longitude))
+```
+
+```{r}
+str_name<-'data/wc2.1_country/BRA_wc2.1_30s_bio.tif' 
+imported_raster=raster(str_name)
+
+plot(imported_raster)
+
+points(y=dat$Latitude, x=dat$Longitude)
+
+ggplot(imported_raster)
+class(imported_raster)
+
+
+```
+
+```{r}
+# create SpatRaster (can also do `x <- rast(f)`
+Brazil <- rast(imported_raster)
+
+islands <- dat %>% dplyr::filter(., Precision=="ilha")
+notislands <- dat %>% dplyr::filter(., Precision!="ilha")
+ggplot() + geom_spatraster(data = Brazil)+geom_point(data=notislands, aes(x=Longitude, y=Latitude)) + geom_point(data=islands, aes(x=Longitude, y=Latitude), col="Red")+theme_classic()
+
+dat$Latitude[dat$Latitude>0] <- dat$Latitude[dat$Latitude>0]*-1
+dat$Longitude[dat$Longitude>0] <- dat$Longitude[dat$Longitude>0]*-1
+
+hist(dat$Longitude)
+islands <- dat %>% dplyr::filter(., Precision=="ilha")
+notislands <- dat %>% dplyr::filter(., Precision!="ilha") %>% dplyr::filter(., Longitude< -30)
+
+
+ggplot() + geom_spatraster(data = Brazil)+geom_point(data=notislands, aes(x=Longitude, y=Latitude)) + geom_point(data=islands, aes(x=Longitude, y=Latitude), col="Red")+theme_classic()
+```
+```{r}
+#Count unique frugivore obs
+dat <- dat %>% dplyr::group_by(., Frugivore_Species) %>% dplyr::mutate(., nFrugsites=length(unique(Latitude, Longitude)))
+#Count unique plant obs
+dat <- dat %>% dplyr::group_by(., Plant_Species) %>% dplyr::mutate(., nPlantsites=length(unique(Latitude, Longitude)))
+#Count unique interaction obs
+dat <- dat %>% dplyr::group_by(., Plant_Species, Frugivore_Species) %>% dplyr::mutate(., nIntsites=length(unique(Latitude, Longitude)))
+
+hist(dat$nFrugsites)
+hist(dat$nPlantsites)
+hist(dat$nIntsites)
+```
+
+
+```{r}
+int1 <- dat %>% dplyr::filter(., nIntsites==33)
+bird1 <- dplyr::filter(dat, Frugivore_Species%in%int1$Frugivore_Species) %>% ungroup() %>% dplyr::select(., Frugivore_Species, Longitude, Latitude)
+colnames(bird1) <- c("sp", "x", "y")
+
+plant1 <- dplyr::filter(dat, Plant_Species %in% int1$Plant_Species) %>% ungroup() %>% dplyr::select(., Plant_Species, Longitude, Latitude)
+colnames(plant1) <- c("sp", "x", "y")
+
+indiv1 <- rbind(bird1, plant1)
+write.table(indiv1, file="data/occ_Dat/Toucan_Palm_Sep.txt", sep="\t")
+```
+
+
+Querying gbif
+```{r}
+toucan <- rgbif::occ_search(scientificName = "Ramphastos dicolorus", hasGeospatialIssue=FALSE)
+
+toucan$data
+?occ_search()
+
+
+keynum <- name_backbone("Ramphastos dicolorus")$usageKey
+
+gbif_download <- occ_download(pred("taxonKey", keynum),format = "SIMPLE_CSV", user="riverman12", pwd="1Chicken!!!", email="fostergt@email.sc.edu")
+
+
+occ_download_wait(gbif_download)
+
+toucandat <- occ_download_get(gbif_download) %>%
+  occ_download_import()
+```
+Example cleaning of gbif
+```{r}
+toucandat <- dplyr::filter(toucandat, countryCode %in% c("BR", "AR", "BO", "CL", "CO", "EC", "FK", "GF", "GY", "PY", "PE", "SR", "UY", "VE")) #only return records from South American countries
+car <- as.numeric(ext(Brazil))
+
+toucandat <- dplyr::filter(toucandat, decimalLongitude > floor(car)$xmin & decimalLongitude < ceiling(car)$xmax & decimalLatitude > floor(car)$ymin & decimalLatitude < ceiling(car)$ymax) #Filter to only include values within our raster extent
+
+ggplot(data = world) +
+    geom_sf()+geom_point(data=toucandat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+
+
+ggplot() + geom_spatraster(data = Brazil)+geom_point(data=toucandat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+```
+
+
+```{r}
+toucandat_small <- dplyr::select(toucandat, species, decimalLongitude, decimalLatitude)
+write.table(toucandat_small, file="data/occ_Dat/Toucan_gbif.txt", sep="\t")
+```
+
+```{r}
+ToucanGBIF <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
+        proj_dir = NULL,
+        result_dir = NULL,
+       occ_file = "data/occ_Dat/Toucan_gbif.txt",
+       sp="species",
+       x="decimalLongitude",
+       y="decimalLatitude",
+       min_occ=20,
+       thin_occ=NULL,
+       eval_occ=NULL,
+        colin_var = c(method='PCA'),
+      imp_var = TRUE,
+      sp_accessible_area = NULL,
+       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
+        pres_abs_ratio = 0.5,
+        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
+        save_part = FALSE,
+      save_final = TRUE,
+      algorithm="MXD", #Using Maxent with Default Params
+       thr="MAX_TSS",#Threshold by maximizing TSS
+      msdm = NULL,
+      ensemble = NULL,
+      extrapolation = FALSE,
+       cores = 4)
+```
+
+
+```{r}
+Example <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
+        proj_dir = NULL,
+        result_dir = NULL,
+       occ_file = "data/occ_Dat/Toucan_Palm_Sep.txt",
+       sp="sp",
+       x="x",
+       y="y",
+       min_occ=5,
+       thin_occ=NULL,
+       eval_occ=NULL,
+        colin_var = c(method='PCA'),
+      imp_var = TRUE,
+      sp_accessible_area = NULL,
+       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
+        pres_abs_ratio = 0.5,
+        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
+        save_part = FALSE,
+      save_final = TRUE,
+      algorithm="MXD", #Using Maxent with Default Params
+       thr="MAX_TSS",#Threshold by maximizing TSS
+      msdm = NULL,
+      ensemble = NULL,
+      extrapolation = FALSE,
+       cores = 4)
+
+```
+
+
+
+
+Below: Training the model on interaction data
+```{r, eval = FALSE}
+Example <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
+        proj_dir = NULL,
+        result_dir = NULL,
+       occ_file = "data/occ_Dat/Toucan_Palm_Sep.txt",
+       sp="sp",
+       x="x",
+       y="y",
+       min_occ=5,
+       thin_occ=NULL,
+       eval_occ=NULL,
+        colin_var = c(method='PCA'),
+      imp_var = TRUE,
+      sp_accessible_area = NULL,
+       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
+        pres_abs_ratio = 0.5,
+        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
+        save_part = FALSE,
+      save_final = TRUE,
+      algorithm="MXD", #Using Maxent with Default Params
+       thr="MAX_TSS",#Threshold by maximizing TSS
+      msdm = NULL,
+      ensemble = NULL,
+      extrapolation = FALSE,
+       cores = 4)
+```
+
+```{r}
+
+```
+

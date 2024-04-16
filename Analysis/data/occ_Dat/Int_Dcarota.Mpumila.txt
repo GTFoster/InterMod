@@ -1,0 +1,7 @@
+"sp"	"x"	"y"	"species"
+"1"	"Mordellistena pumila"	3.158	42.417	"Interaction"
+"4"	"Mordellistena pumila"	3.16	42.417	"Interaction"
+"7"	"Mordellistena pumila"	3.147	42.398	"Interaction"
+"10"	"Mordellistena pumila"	3.15	42.398	"Interaction"
+"12"	"Mordellistena pumila"	3.229	42.301	"Interaction"
+"16"	"Mordellistena pumila"	3.231	42.3	"Interaction"

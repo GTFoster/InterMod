@@ -153,7 +153,6 @@ Now la
 mgIntTaxaFil <- mgnInt %>% dplyr::filter(., grepl("NA", InterID)==FALSE)
 
 InterMangelCounts <- mgIntTaxaFil %>% dplyr::group_by(., InterID) %>% dplyr::summarise(., networks=length(unique(network_id)))
-
 ```
 
 Most common interaction, a morning glory called field bindweed (*Convolvulus arvensis*) and a sweat bee (*Lasioglossum incompletum*). This occurs in 103 networks. 
@@ -198,55 +197,198 @@ for(i in 1:length(mg_poll_sf)){
 
 ```
 
-################## START HERE: I feel like this code should extract the geometry, but it seems like its not working. Need to fix
+Turns out, I was missing geographic coordinates for the species described above. Let's try again, maknig a big datasource I can use for all species. 
 ```{r}
 geoms <- list()
-for(i in length(mg_poll_sf)){
-  if(mg_poll_sf[[i]]$network$network_id %in% unique(ConA$network_id)==TRUE){
-    print("True")
-    geoms[[i]]$netID <- mg_poll_sf[[i]]$network$network_id
-    geoms[[i]]$geom <- mg_poll_sf[[i]]$network$geom
-    browser()
-  }
-  else{
-    geoms[[i]] <- "not present"
-    next
-  }
+for(i in 1:length(mg_poll_sf)){
+  #if(mg_poll_sf[[i]]$network$network_id %in% unique(ConA$network_id)==TRUE){
+    #print("True")
+    geoms[[i]] <-list(netID=mg_poll_sf[[i]]$network,
+                      geom=mg_poll_sf[[i]]$network$geom)
+    #geoms[[i]]$netID <- mg_poll_sf[[i]]$network$network_id
+    #geoms[[i]]$geom <- mg_poll_sf[[i]]$network$geom
 }
-
-geoms[[1]]
+  #else{
+    #geoms[[i]] <- "not present"
+    #next
+  #}
+#}
 ```
 
+```{r}
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+ggplot(data = world) +
+    geom_sf()+theme_classic() +geom_sf(data=geoms[[228]]$geom)
+for(i in 1:50){
+  wrd <- wrd+geom_sf(data=geoms[[i]]$netID$geom)
+}
+
+geoms[[i]]$netID$geom
+```
+crds of spatvec object
+
+```{r}
+for(i in 1:324){
+  if(geoms[[i]]$netID$network_id==5016){
+    print(i)
+  }
+}
+geoms[[228]]$geom
+st_coordinates(geoms[[228]]$geom)
+
+coords <- NULL
+for(i in 1:length(geoms)){
+df_temp <- data.frame(network_id=geoms[[i]]$netID$network_id,x=colMeans(st_coordinates(geoms[[i]]$netID$geom))[1], y=colMeans(st_coordinates(geoms[[i]]$netID$geom))[2]) #Extract the average point. If it's a polygon, average all the edge points. Will replace this with a formal centroid finding approach later
+coords <- rbind(coords, df_temp)
+}
+
+coords <- dplyr::filter(coords, is.na(x)==FALSE)
+
+```
+
+```{r}
+mGDat <- left_join(mgIntTaxaFil, coords, by="network_id")
+```
+
+
+```{r}
+mGDat <- dplyr::filter(mGDat, is.na(x)==FALSE)
+dplyr::select(mGDat, network_id, x) %>% unique() %>% table() %>% table() #Checking that there are no locations that are the same across network ids. 
+```
+Most records
+```{r}
+head(sort(table(mGDat$taxonomy.name.from), decreasing = TRUE))
+head(sort(table(mGDat$taxonomy.name.to), decreasing = TRUE))
+
+```
+
+Most unique locations observed
+```{r}
+mGDat %>% dplyr::select(., taxonomy.name.from, x,y) %>% unique() %>% select(taxonomy.name.from) %>% table() %>% sort(., decreasing=TRUE) %>% head()
+mGDat %>% dplyr::select(., taxonomy.name.to, network_id) %>% unique() %>% select(taxonomy.name.to) %>% table() %>% sort(., decreasing=TRUE) %>% head()
+```
+
+```{r}
+partners <- mGDat %>% dplyr::filter(taxonomy.name.from=="Mordellistena pumila") %>% select(., taxonomy.name.to, network_id) %>% unique() %>% select(., taxonomy.name.to) %>% table()
+
+sort(partners, decreasing=TRUE)
+```
+
+#Result: 
 ```{r}
 library(ENMTML)
 ```
 
+Creating occurance data files to use
 ```{r}
-ENMTML(
-  pred_dir,
-  proj_dir = NULL,
-  result_dir = NULL,
-  occ_file,
-  sp,
-  x,
-  y,
-  min_occ = 10,
-  thin_occ = NULL,
-  eval_occ = NULL,
-  colin_var = NULL,
-  imp_var = FALSE,
-  sp_accessible_area = NULL,
-  pseudoabs_method,
-  pres_abs_ratio = 1,
-  part,
-  save_part = FALSE,
-  save_final = TRUE,
-  algorithm,
-  thr,
-  msdm = NULL,
-  ensemble = NULL,
-  extrapolation = FALSE,
-  cores = 1
-)
+M_dat <- mGDat %>% dplyr::filter(taxonomy.name.from=="Mordellistena pumila") %>% dplyr::select(., taxonomy.name.from, x, y) %>% unique()
+colnames(M_dat) <- c("sp", "x", "y")
+
+D_dat <- mGDat %>% dplyr::filter(taxonomy.name.to=="Daucus carota carota") %>% dplyr::select(., taxonomy.name.to, x, y) %>% unique()
+colnames(D_dat) <- c("sp", "x", "y")
+
+Int_dat <- mGDat %>% dplyr::filter(taxonomy.name.to=="Daucus carota carota") %>%
+  dplyr::filter(., taxonomy.name.from=="Mordellistena pumila") %>% dplyr::select(., taxonomy.name.from, x, y) %>% unique()
+colnames(Int_dat) <- c("sp", "x", "y")
+Int_dat$species <- "Interaction"
+
+
+write.table(D_dat, file="data/occ_Dat/Dcarota.txt", sep="\t")
+write.table(M_dat, file="data/occ_Dat/Mpumila.txt", sep="\t")
+write.table(Int_dat, file="data/occ_Dat/Int_Dcarota.Mpumila.txt", sep="\t")
 ```
+
+
+Reading in environmental data
+
+```{r}
+library(geodata)
+
+bioclim_spain <- geodata::worldclim_country(country="Spain", var = "bio",res = 0.5, path = "data/")
+```
+
+
+```{r}
+Carrot <- ENMTML(pred_dir="data/wc2.1_country/",
+        proj_dir = NULL,
+        result_dir = NULL,
+       occ_file = "data/occ_Dat/Dcarota.txt",
+       sp="sp",
+       x="x",
+       y="y",
+       min_occ=5,
+       thin_occ=NULL,
+       eval_occ=NULL,
+        colin_var = c(method='PCA'),
+      imp_var = TRUE,
+      sp_accessible_area = NULL,
+       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
+        pres_abs_ratio = 0.5,
+        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
+        save_part = FALSE,
+      save_final = TRUE,
+      algorithm="MXD", #Using Maxent with Default Params
+       thr="MAX_TSS",#Threshold by maximizing TSS
+      msdm = NULL,
+      ensemble = NULL,
+      extrapolation = FALSE,
+       cores = 4)
+```
+
+
+```{r}
+Evaltab <- read.table(file="data/Result/Evaluation_Table.txt")
+read.table(file="data/Result/Occurrences_Evaluation.txt")
+
+Carrot_raster <- raster("data/Result/EnvConstrain/Daucus_carota_carota.tif")
+plot(Carrot_raster)
+```
+
+Let's try again with the bee. I thought I had like 60 carrot entires, but actually just had like 6 :(
+
+I'm going to try it again with just the bee with a lower KFold number-it has 10 entries. 
+
+```{r}
+Mpulima <- ENMTML(pred_dir="data/wc2.1_country/",
+        proj_dir = NULL,
+        result_dir = NULL,
+       occ_file = "data/occ_Dat/Mpumila.txt",
+       sp="sp",
+       x="x",
+       y="y",
+       min_occ=5,
+       thin_occ=NULL,
+       eval_occ=NULL,
+        colin_var = c(method='PCA'),
+      imp_var = TRUE,
+      sp_accessible_area = NULL,
+       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
+        pres_abs_ratio = 0.5,
+        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
+        save_part = FALSE,
+      save_final = TRUE,
+      algorithm="MXD", #Using Maxent with Default Params
+       thr="MAX_TSS",#Threshold by maximizing TSS
+      msdm = NULL,
+      ensemble = NULL,
+      extrapolation = FALSE,
+       cores = 4)
+```
+
+
+
+```{r}
+library(raster)
+str_name<-'data/wc2.1_country/ESP_wc2.1_30s_bio.tif' 
+imported_raster=raster(str_name)
+
+plot(imported_raster)
+points(x=D_dat$x, y=D_dat)
+```
+
+
 
