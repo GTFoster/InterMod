@@ -1,0 +1,11 @@
+"sp"	"x"	"y"
+"1"	"Mordellistena pumila"	3.175	42.354
+"4"	"Mordellistena pumila"	3.158	42.417
+"10"	"Mordellistena pumila"	3.16	42.417
+"15"	"Mordellistena pumila"	3.297	42.323
+"22"	"Mordellistena pumila"	3.305	42.32
+"26"	"Mordellistena pumila"	3.303	42.319
+"31"	"Mordellistena pumila"	3.147	42.398
+"36"	"Mordellistena pumila"	3.15	42.398
+"39"	"Mordellistena pumila"	3.229	42.301
+"46"	"Mordellistena pumila"	3.231	42.3

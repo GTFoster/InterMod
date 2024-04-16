@@ -5,6 +5,8 @@ Across their geographic ranges, species may interact any place they coocur, or t
 
 As I'm thinking about this now, I'm interested in using an ENM approach to model plant a pollinator distributions seperately, and then predict their interactions specifically, comparing the model to the null case of "if they interact once, they interact wherever they coocur." I imagine the divergence between these two is going to be pretty fundamentally linked to the degree of interaction specialism of the partners in questions; if pollinators are quite specialized then they probably interact whenever they coocur with the plant clade(s) they specialize. If the species are more generalist, the actual chance of interaction may be more likely to be contextually dependent on the environment. 
 
+Potential Offshoot/Alternative idea: What if we compared this across interaction types as well. In addition to there being more variability within an interaction type (i.e. some pollinators are more or less generalist), we may also see differences across interactions types (pollination, seed-dispersal, parasitism).
+
 Repository structure:
 ```{bash}
 

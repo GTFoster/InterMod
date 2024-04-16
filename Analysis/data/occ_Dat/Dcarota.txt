@@ -1,0 +1,7 @@
+"sp"	"x"	"y"
+"1"	"Daucus carota carota"	3.158	42.417
+"17"	"Daucus carota carota"	3.16	42.417
+"22"	"Daucus carota carota"	3.147	42.398
+"40"	"Daucus carota carota"	3.15	42.398
+"52"	"Daucus carota carota"	3.229	42.301
+"60"	"Daucus carota carota"	3.231	42.3
