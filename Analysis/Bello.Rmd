@@ -16,6 +16,17 @@ library(terra)
 library(tidyterra)
 library(ENMTML)
 library(rgbif)
+library(udunits2)
+library(units)
+library(sf)
+library(stars)
+library(rworldmap)
+library(CoordinateCleaner)
+library(dismo)
+library(kernlab)
+library(mgcv)
+library(spatialEco)
+library(dplyr)
 ```
 
 
@@ -28,7 +39,7 @@ dat <- dplyr::filter(dat, is.na(Latitude)==FALSE)
 library(rnaturalearth)
 library(rnaturalearthdata)
 
-bioclim_brazil <- geodata::worldclim_country(country="Brazil", var = "bio",res = 0.5, path = "data/")
+bioclim_brazil <- geodata::worldclim_country(country=c("Brazil", "Argentina"), var = "bio",res = 0.5, path = "data/")
 
 world <- ne_countries(scale = "medium", returnclass = "sf")
 
@@ -68,6 +79,8 @@ notislands <- dat %>% dplyr::filter(., Precision!="ilha") %>% dplyr::filter(., L
 
 ggplot() + geom_spatraster(data = Brazil)+geom_point(data=notislands, aes(x=Longitude, y=Latitude)) + geom_point(data=islands, aes(x=Longitude, y=Latitude), col="Red")+theme_classic()
 ```
+
+
 ```{r}
 #Count unique frugivore obs
 dat <- dat %>% dplyr::group_by(., Frugivore_Species) %>% dplyr::mutate(., nFrugsites=length(unique(Latitude, Longitude)))
@@ -219,6 +232,44 @@ Example <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
       extrapolation = FALSE,
        cores = 4)
 ```
+
+Take 2: Manually creating SDMs according to the workflow Cleber developed
+
+First, grab worldclim variables for South america
+```{r}
+wrld<-rworldmap::getMap()
+SouthAme<-which(wrld$continent=='South America')
+NewWorld<-c(NorthAme, SouthAme)
+SA_nms<-wrld[SouthAme,17] ##Americas
+
+#Getting climate data
+Clima<-raster::getData('worldclim', var='bio', res=2.5)
+
+Clima <-raster::crop(Clima, SA_nms)
+```
+
+```{r}
+#Running a PCA over our climatic data
+EnvCoord<-na.omit(raster::rasterToPoints(Clima)) #Make raster into long df of points
+PcaR<-EnvCoord[,-c(1:2)] #remove latlong for PCA
+#Scale transform 
+DScale <- data.frame(apply(PcaR,2,scale)) #scale
+#Run the  PCA 
+DPca <- prcomp(DScale,retx=TRUE,center=F,scale=F) #run PCA on scaled data
+
+#% of the variation explained
+NEixos<-length(summary(DPca)$importance[3,])
+CumVar<-summary(DPca)$importance[3,]
+VarEx<-data.frame(CumVar)
+
+#Getting the loadings and transforming it into a dataframe
+Eix<-as.data.frame(DPca$x) #Grab the PCA loadings
+EixXY<-cbind(EnvCoord[,(1:2)],Eix) #re add back in the coordinates from earlier
+sp::gridded(EixXY)<- ~x+y #Create large spatial pixels df (prep to reconvert to raster)
+PCAPr<-raster::stack(EixXY) #create a rasterstack for each 
+raster.comb<-PCAPr[[1:(sum(VarEx<=0.95)+1)]] #only include the axis necessary to explain 95% of variation
+```
+
 
 ```{r}
 
