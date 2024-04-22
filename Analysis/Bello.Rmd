@@ -38,7 +38,7 @@ ggplot(data = world) +
 
 ```{r}
 str_name<-'data/wc2.1_country/BRA_wc2.1_30s_bio.tif' 
-imported_raster=raster(str_name)
+imported_raster=raster::raster(str_name)
 
 plot(imported_raster)
 
@@ -47,7 +47,7 @@ points(y=dat$Latitude, x=dat$Longitude)
 ggplot(imported_raster)
 class(imported_raster)
 
-
+4740*5460
 ```
 
 ```{r}
