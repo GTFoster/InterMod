@@ -27,6 +27,12 @@ library(kernlab)
 library(mgcv)
 library(spatialEco)
 library(dplyr)
+library(rgbif)
+library(rnaturalearth)
+library(rJava)
+
+sf_use_s2(FALSE) #Don't assume a sphericical geometry-therefore dist for buffer will be in units of degree
+crul::set_opts(http_version = 2) #For getting gbif queries to work: https://github.com/ropensci/crul/issues/174#issuecomment-1600273273
 ```
 
 
@@ -57,8 +63,6 @@ points(y=dat$Latitude, x=dat$Longitude)
 
 ggplot(imported_raster)
 class(imported_raster)
-
-4740*5460
 ```
 
 ```{r}
@@ -77,7 +81,7 @@ islands <- dat %>% dplyr::filter(., Precision=="ilha")
 notislands <- dat %>% dplyr::filter(., Precision!="ilha") %>% dplyr::filter(., Longitude< -30)
 
 
-ggplot() + geom_spatraster(data = Brazil)+geom_point(data=notislands, aes(x=Longitude, y=Latitude)) + geom_point(data=islands, aes(x=Longitude, y=Latitude), col="Red")+theme_classic()
+ggplot()+ geom_spatraster(data = Brazil)+geom_point(data=notislands, aes(x=Longitude, y=Latitude))+theme_classic()
 ```
 
 
@@ -104,17 +108,13 @@ plant1 <- dplyr::filter(dat, Plant_Species %in% int1$Plant_Species) %>% ungroup(
 colnames(plant1) <- c("sp", "x", "y")
 
 indiv1 <- rbind(bird1, plant1)
-write.table(indiv1, file="data/occ_Dat/Toucan_Palm_Sep.txt", sep="\t")
+#write.table(indiv1, file="data/occ_Dat/Toucan_Palm_Sep.txt", sep="\t")
 ```
 
 
 Querying gbif
 ```{r}
 toucan <- rgbif::occ_search(scientificName = "Ramphastos dicolorus", hasGeospatialIssue=FALSE)
-
-toucan$data
-?occ_search()
-
 
 keynum <- name_backbone("Ramphastos dicolorus")$usageKey
 
@@ -146,92 +146,10 @@ toucandat_small <- dplyr::select(toucandat, species, decimalLongitude, decimalLa
 write.table(toucandat_small, file="data/occ_Dat/Toucan_gbif.txt", sep="\t")
 ```
 
-```{r}
-ToucanGBIF <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
-        proj_dir = NULL,
-        result_dir = NULL,
-       occ_file = "data/occ_Dat/Toucan_gbif.txt",
-       sp="species",
-       x="decimalLongitude",
-       y="decimalLatitude",
-       min_occ=20,
-       thin_occ=NULL,
-       eval_occ=NULL,
-        colin_var = c(method='PCA'),
-      imp_var = TRUE,
-      sp_accessible_area = NULL,
-       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
-        pres_abs_ratio = 0.5,
-        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
-        save_part = FALSE,
-      save_final = TRUE,
-      algorithm="MXD", #Using Maxent with Default Params
-       thr="MAX_TSS",#Threshold by maximizing TSS
-      msdm = NULL,
-      ensemble = NULL,
-      extrapolation = FALSE,
-       cores = 4)
-```
-
-
-```{r}
-Example <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
-        proj_dir = NULL,
-        result_dir = NULL,
-       occ_file = "data/occ_Dat/Toucan_Palm_Sep.txt",
-       sp="sp",
-       x="x",
-       y="y",
-       min_occ=5,
-       thin_occ=NULL,
-       eval_occ=NULL,
-        colin_var = c(method='PCA'),
-      imp_var = TRUE,
-      sp_accessible_area = NULL,
-       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
-        pres_abs_ratio = 0.5,
-        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
-        save_part = FALSE,
-      save_final = TRUE,
-      algorithm="MXD", #Using Maxent with Default Params
-       thr="MAX_TSS",#Threshold by maximizing TSS
-      msdm = NULL,
-      ensemble = NULL,
-      extrapolation = FALSE,
-       cores = 4)
-
-```
 
 
 
 
-Below: Training the model on interaction data
-```{r, eval = FALSE}
-Example <- ENMTML::ENMTML(pred_dir="data/wc2.1_country/",
-        proj_dir = NULL,
-        result_dir = NULL,
-       occ_file = "data/occ_Dat/Toucan_Palm_Sep.txt",
-       sp="sp",
-       x="x",
-       y="y",
-       min_occ=5,
-       thin_occ=NULL,
-       eval_occ=NULL,
-        colin_var = c(method='PCA'),
-      imp_var = TRUE,
-      sp_accessible_area = NULL,
-       pseudoabs_method=c(method='GEO_CONST', width='100'), #100 km buffer is what cleber does
-        pres_abs_ratio = 0.5,
-        part=c(method= 'KFOLD', folds='2'), #Kfolds valifation, where K=5
-        save_part = FALSE,
-      save_final = TRUE,
-      algorithm="MXD", #Using Maxent with Default Params
-       thr="MAX_TSS",#Threshold by maximizing TSS
-      msdm = NULL,
-      ensemble = NULL,
-      extrapolation = FALSE,
-       cores = 4)
-```
 
 Take 2: Manually creating SDMs according to the workflow Cleber developed
 
@@ -239,18 +157,30 @@ First, grab worldclim variables for South america
 ```{r}
 wrld<-rworldmap::getMap()
 SouthAme<-which(wrld$continent=='South America')
-NewWorld<-c(NorthAme, SouthAme)
 SA_nms<-wrld[SouthAme,17] ##Americas
 
 #Getting climate data
-Clima<-raster::getData('worldclim', var='bio', res=2.5)
-
+Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
 Clima <-raster::crop(Clima, SA_nms)
+terra::plot(Clima[[1]])
+
+#Here's loading all of these in and merging them
+#tile53 <- raster::stack("worldclim/wc2.1_tiles/tile_53_wc2.1_30s_bio.tif")
+#tile52 <- raster::stack("worldclim/wc2.1_tiles/tile_52_wc2.1_30s_bio.tif")
+#tile29 <- raster::stack("worldclim/wc2.1_tiles/tile_29_wc2.1_30s_bio.tif")
+#tile28 <- raster::stack("worldclim/wc2.1_tiles/tile_28_wc2.1_30s_bio.tif")
+#tile41 <- raster::stack("worldclim/wc2.1_tiles/tile_41_wc2.1_30s_bio.tif")
+#tile40 <- raster::stack("worldclim/wc2.1_tiles/tile_40_wc2.1_30s_bio.tif")
+
+#SA <- terra::merge(tile53, tile52, tile29, tile28, tile41, tile40)
+#plot(SA)
+Climastack <- raster::stack(Clima)
 ```
+
 
 ```{r}
 #Running a PCA over our climatic data
-EnvCoord<-na.omit(raster::rasterToPoints(Clima)) #Make raster into long df of points
+EnvCoord<-na.omit(raster::rasterToPoints(Climastack)) #Make raster into long df of points
 PcaR<-EnvCoord[,-c(1:2)] #remove latlong for PCA
 #Scale transform 
 DScale <- data.frame(apply(PcaR,2,scale)) #scale
@@ -270,8 +200,365 @@ PCAPr<-raster::stack(EixXY) #create a rasterstack for each
 raster.comb<-PCAPr[[1:(sum(VarEx<=0.95)+1)]] #only include the axis necessary to explain 95% of variation
 ```
 
+Alright. That felt harder than it needed to be, but I at least have a PCA of all SA at a 2.5 minute resolution I can work with.  
+```{r}
+terra::plot(raster.comb)
+```
 
 ```{r}
+    Occ <- read.table(file="data/occ_Dat/Toucan_gbif.txt", sep="\t")
+    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurance cells
+    sf_use_s2(FALSE) #Don't assume a sphericical geometry-therefore dist for buffer will be in units of degree
+  
+    #creating a 200km2 buffer to select the psudo-absence points
+    Occ <- unique(Occ) #remove redundant records
+    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects
+    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
+    plot(OccBuffer)
+    
+    
+    
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBuffer2 <-as(OccBuffer, 'Spatial')
+    terra::plot(OccBuffer2)
+    OccBuffer2 <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBuffer2, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    #plot(OccBufferRas)
+```
 
+
+
+
+```{r}
+    ##Selecting the pseudo absences
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
+    AllPseudo<-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),]
+    
+    set.seed(1)
+    PseudoA<-sample(x = AllPseudo$cell, size = nrow(Occ))
+    PseudoA<-as.data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA))
+```
+
+
+```{r}
+    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2])
+    colnames(Occurrences)<-c('Long','Lat','x','y')
+    
+    
+    id.training<-sample(1:nrow(Occurrences),round(0.75*nrow(Occurrences),0)) 
+    
+    training<-prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")]) 
+    testing<-prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
+    training<-na.omit(training)
+    testing<-na.omit(testing)
+      
+    Occurrences2<-Occurrences
+    colnames(Occurrences2)<-rep(c('Long','Lat'),2)
+    testingPresPA<-rbind.data.frame(Occurrences2[-id.training,1:2],Occurrences2[-id.training,3:4])
+    
+          ##Maxent
+    Sys.setenv(NOAWT=TRUE)
+    Maxent.Model<-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
+    
+    
+    Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') 
+    
+    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+
+    
+    Max0cut <- Maxent.0
+    Max0cut <- terra::crop(x=Max0cut, y=c(-80,-35,-60,5))
+```
+
+```{r}
+plot(Max0cut)
+points(x=Occ$decimalLongitude, y=Occ$decimalLatitude, cex=0.1, col=rgb(red = 0, green = 0, blue = 0, alpha = 1))
+```
+Functionalize creating the SDM
+```{r}
+trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(-80,-35,-60,5)){
+    Occ <- as.data.frame(Occ)
+    colnames(Occ) <- c("species", "decimalLongitude", "decimalLatitude")
+    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurrence cells
+  
+    #creating a 200km2 buffer to select the psudo-absence points
+    Occ <- unique(Occ) #remove redundant records
+    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200km) buffers
+    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
+    
+    
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBufferVect <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBufferVect, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    
+    ##Selecting the potential pseudo absence sites
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
+    AllPseudo <-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),] #remove true presence from potential psuedo points
+    
+    #Actually sample psuedoabsences
+    set.seed(seed)
+    PseudoA<-sample(x = AllPseudo$cell, size = nrow(Occ)) #Sample a number of psuedoA equal to # of occurances
+    PseudoA<-as.data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA)) #Make a df
+    
+    #Now, train a Maxent model
+    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2]) #bind into 4 cols; left is real, right is associated psuedo
+    colnames(Occurrences)<-c('Long','Lat','x','y')
+    
+
+    id.training<-sample(1:nrow(Occurrences),round(split*nrow(Occurrences),0)) #create test-train split (split=percent train)
+    training<-dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")])  #Use dismo prepare data to set up df
+    testing<-dismo::prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
+    training<-na.omit(training)
+    testing<-na.omit(testing)
+      
+    colnames(Occurrences)<-rep(c('Long','Lat'),2) #Change names
+    testingPresPA<-rbind.data.frame(Occurrences[-id.training,1:2],Occurrences[-id.training,3:4])
+    
+          ##Maxent
+    Sys.setenv(NOAWT=TRUE)
+    Maxent.Model <-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
+    
+    
+    Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') #Predict suitability according to trained model
+    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+
+    
+    Max0cut <- Maxent.0
+    Max0cut <- terra::crop(x=Max0cut, y=cropextent) #Crop the predicted model to smaller extent
+    
+    output <- list(prediction=Max0cut, eval=Maxent.eval, sp=sp)
+    return(output)
+}    
+```
+
+```{r}
+toucan <- trainMaxent(Occ=Occ, seed=1, split=0.75, sp="Ramphastos dicolorus")
+```
+
+
+
+Functionalize Querying gbif
+```{r}
+gbifQuery <- function(name, doplot=FALSE){
+  record <- rgbif::occ_search(scientificName = name, hasGeospatialIssue=FALSE)
+  keynum <- rgbif::name_backbone(name)$usageKey
+  gbif_download <- occ_download(pred("taxonKey", keynum),format = "SIMPLE_CSV", user="riverman12", pwd="1Chicken!!!", email="fostergt@email.sc.edu")
+  
+  
+  occ_download_wait(gbif_download)
+  spdat <- occ_download_get(gbif_download) %>%
+    occ_download_import()
+  
+  spdat <- dplyr::filter(spdat, countryCode %in% c("BR", "AR", "BO", "CL", "CO", "EC", "FK", "GF", "GY", "PY", "PE", "SR", "UY", "VE")) #only return records from South American countries
+  #car <- as.numeric(ext(Brazil))
+  
+  spdat <- dplyr::filter(spdat, decimalLongitude > -80 & decimalLongitude < -35 & decimalLatitude > -60 & decimalLatitude < 5) #Filter to only include values within our raster extent
+  
+  world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+  ggplot(data = world) +
+      geom_sf()+geom_point(data=spdat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+  
+  if(doplot==TRUE){
+    plot(Climastack[[1]])
+    points(x=spdat$decimalLongitude, y=spdat$decimalLatitude)
+  }
+  spatsmall <- dplyr::select(spdat, species, decimalLongitude, decimalLatitude)
+  spatsmall <- as.data.frame(spatsmall)
+  return(spatsmall)
+}
+```
+
+Plotting suitability based on Gbif data
+```{r}
+EeOcc <- gbifQuery(name="Euterpe edulis")
+EEMaxent <- trainMaxent(Occ=EeOcc, sp="Euterpe edulis")
+plot(EEMaxent$prediction)
+EEMaxent$eval
+
+RdOcc <- gbifQuery(name="Ramphastos dicolorus")
+RdMaxent <- trainMaxent(Occ=RdOcc, sp="Ramphastos dicolorus")
+plot(EEMaxent$prediction)
+plot(RdMaxent$prediction)
+RdMaxent$eval
+
+GBif_Interact <- RdMaxent$prediction*EEMaxent$prediction
+plot(EEMaxent$prediction)
+plot(RdMaxent$prediction)
+
+#png(file="Figures/Gbif_Interact.png", width=480, height=480)
+#plot(GBif_Interact, ylab="Latitude", xlab="Longitude", labs="Interaction Suitability", legend.args = #list(text = 'Interaction Suitability', side = 4, 
+         #font = 2, line = -1.5, cex = 1))
+#dev.off()
+```
+
+Plotting suitability based on Bello Interactions
+```{r}
+colnames(int1)
+int1$inter <- paste(int1$Frugivore_Species, int1$Plant_Species, sep="-")
+intOcc <- int1 %>% ungroup() %>% dplyr::select(inter, Longitude, Latitude) %>% unique()
+
+interaction1 <- trainMaxent(Occ=as.data.frame(intOcc), sp="Rdicolorus-Eedulis")
+plot(interaction1$prediction)
+points(x=intOcc$Longitude, y=intOcc$Latitude)
+interaction1$eval
+
+plot(interaction1$prediction)
+interaction1$eval
+points(x=intOcc$Longitude, y=intOcc$Latitude)
+
+plot(GBif_Interact)
+points(x=intOcc$Longitude, y=intOcc$Latitude)
+```
+
+
+```{r}
+png(file="Figures/ToucanOcc.png", width=480, height=480)
+plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
+points(x=RdOcc$decimalLongitude, y=RdOcc$decimalLatitude, cex=0.1)
+dev.off()
+
+png(file="Figures/PalmOcc.png", width=480, height=480)
+plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
+points(x=EeOcc$decimalLongitude, y=EeOcc$decimalLatitude, cex=0.1)
+dev.off()
+
+png(file="Figures/PalmOcc.png", width=480, height=480)
+plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
+#points(x=EeOcc$decimalLongitude, y=EeOcc$decimalLatitude, cex=0.1)
+dev.off()
+
+png(file="Figures/PalmSuit.png", width=480, height=480)
+plot(EEMaxent$prediction, ylab="Latitude", xlab="Longitude", labs="Habitat Suitability", legend.args = list(text = 'Habitat Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+dev.off()
+
+png(file="Figures/ToucanSuit.png", width=480, height=480)
+plot(RdMaxent$prediction, ylab="Latitude", xlab="Longitude", labs="Habitat Suitability", legend.args = list(text = 'Habitat Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+dev.off()
+```
+
+
+Now, let's do some psuedoabsence and performance
+
+```{r}
+set.seed(1)
+psadd <- dat %>% dplyr::filter(., Frugivore_Species!="Ramphastos dicolorus" | Plant_Species!="Euterpe edulis")
+psadd <- psadd[sample(1:nrow(psadd), nrow(intOcc)),] %>% ungroup() %>% dplyr::select(Longitude, Latitude) %>% mutate(., p=0)
+
+
+psadd$S <- raster::extract(x=GBif_Interact, psadd[,1:2],cell=T)[,2]
+intOcc <-intOcc[,1:3]
+intOcc$S <- raster::extract(x=GBif_Interact, intOcc[,2:3],cell=T)[,2]
+intOcc$p <- 1
+
+
+composite <- intOcc %>% dplyr::select(., -inter) %>% rbind(., psadd)
+
+interOC <- pROC::roc(data=composite, response=p, predictor=S)
+interOC
+```
+
+Here: Messing around with iNat data
+Jk-doesn't seem like there are really appropriate projects for this kind of thing. But maybe that's wrong? Idk
+
+
+Let's explore the data from this paper: https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/1365-2656.13986. 308 networks of avian-plant interactions. Maybe good? 
+
+Turns out; the Bello dataset is included in this idk why I thought it wasn't :(
+```{r}
+Moulatlet <- read.csv(file="../Data/datalong_v08_06_2023_CLEANED.csv")
+Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::filter(interaction %in% (c(0,1))) %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::rename(., Latitude=lat, Longitude=lon, Frugivore_Species=Scientific, Plant_Species=plant_id) %>%
+  unique() %>% mutate(ID="M")
+
+Moulatletval$interaction <- as.numeric(Moulatletval$interaction)
+
+Bello <- dat %>% dplyr::select(Frugivore_Species, Plant_Species, Latitude, Longitude) %>% unique() %>% mutate(ID="B")
+Bello$interaction <- 1
+#Bello <- Bello %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-"))
+
+colnames(Bello)
+colnames(Moulatletval)
+Composite <- rbind(Moulatletval, Bello)
+Composite$interaction <- as.numeric(Composite$interaction)
+
+counts <- Composite %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>%
+  group_by(., speciesPair) %>%
+  dplyr::summarise(., pos=sum(interaction), tot=n(), neg=tot-pos)
+
+
+counts <- Composite %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>% dplyr::select(., speciesPair ,ID) %>% left_join(counts, .) %>% unique()
+                            
+counts$prop <- counts$pos/counts$tot                           
+                            
+#pdf(file="Figures/MoulatletInterSummary.pdf")
+counts %>% dplyr::filter(., tot>9, ID=="M") %>%
+ggplot(., aes(x=tot, y=prop))+geom_point(position = "jitter")+theme_classic()+ylab("Proportion of Interactions given Coocurence")+xlab("Number of Coocurrences")+ annotate("text", x = 31, y = .25, label = "211 interactions total")+ annotate("text", x = 31, y = .2, label = "44 birds, 37 plants")
+#dev.off()
+
+
+usable <- counts %>% dplyr::filter(., tot>9, ID=="M") #Number of interactions with at least 10 records
+table(usable$ID)
+
+
+Moulatletval <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-"))
+
+usable <- left_join(usable, Moulatletval, by="speciesPair")
+length(unique(usable$Frugivore_Species))
+length(unique(usable$Plant_Species))
+```
+
+
+
+```{r}
+set.seed(1)
+expDat <- data.frame(AUC=runif(100, min=0.5, max=1))
+expDat$Specialism <- expDat$AUC*rnorm(n=100, mean=1, sd=0.1)
+
+#png(file="Figures/Expectationplot.png")
+ggplot(data=expDat, aes(x=AUC, y=Specialism))+geom_point()+geom_smooth(method="lm")+theme_classic()+xlab("Coocurence Model AUC")+ylab("Frugivore Specialism")
+#dev.off()
+```
+
+
+
+```{r}
+#png(file="Figures/Gbif_Interact_points.png", width=480, height=480)
+plot(GBif_Interact, ylab="Latitude", xlab="Longitude", labs="Interaction Suitability", legend.args = list(text = 'Interaction Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+points(x=intOcc$Longitude, y=intOcc$Latitude, cex=0.2)
+points(x=psadd$Longitude, y=psadd$Latitude, cex=0.2, col="red")
+#dev.off()
+
+
+```
+
+
+```{r}
+val <- dat %>% dplyr::filter(., Frugivore_Species=="Ramphastos dicolorus" | Plant_Species=="Euterpe edulis")
+val <- val %>% dplyr::select(., Plant_Species, Frugivore_Species, Latitude, Longitude)
+site <- data.frame(Latitude=val$Latitude, lon=Latitude$Longitude)
+frugsites <- val %>% ungroup() %>% dplyr::filter(., Frugivore_Species=="Ramphastos dicolorus") %>% dplyr::select(., Latitude, Longitude) %>% unique() %>% dplyr::mutate(., Frugivore=1) %>% left_join(val, .)
+
+cooc <- frugsites %>% ungroup %>% dplyr::filter(., Plant_Species=="Euterpe edulis") %>% dplyr::select(., Latitude, Longitude) %>% unique() %>% dplyr::mutate(., Plant=1) %>% left_join(frugsites, .)
+
+cooc$Plant[is.na(cooc$Plant)] <- 0
+cooc$Frugivore[is.na(cooc$Frugivore)] <- 0
+
+sites <- cooc %>% ungroup() %>% dplyr::select(., Latitude, Longitude, Plant, Frugivore) %>% unique()
+sites$cooc <- sites$Frugivore*sites$Plant
+
+sites <- intOcc %>% dplyr::select(., Longitude, Latitude) %>% dplyr::mutate(., inter=1) %>% left_join(sites, .)
+
+sites$inter[is.na(sites$inter)] <- 0
+table(sites$cooc, sites$inter)
 ```
 

@@ -437,9 +437,9 @@
 "436"	"Euterpe edulis"	-42.88	-20.75
 "437"	"Euterpe edulis"	-42.88	-20.75
 "438"	"Euterpe edulis"	-42.88	-20.75
-"439"	"Euterpe edulis"	45.02	-23.52
-"440"	"Euterpe edulis"	45.02	-23.52
-"441"	"Euterpe edulis"	45.02	-23.52
+"439"	"Euterpe edulis"	-45.02	-23.52
+"440"	"Euterpe edulis"	-45.02	-23.52
+"441"	"Euterpe edulis"	-45.02	-23.52
 "442"	"Euterpe edulis"	-48.406944	-24.265278
 "443"	"Euterpe edulis"	-48.406944	-24.265278
 "444"	"Euterpe edulis"	-48.406944	-24.265278
