@@ -1,0 +1,240 @@
+---
+title: "Moulatlet Data"
+author: "Grant Foster"
+date: "2024-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(raster)
+library(tidyverse)
+library(terra)
+library(tidyterra)
+library(ENMTML)
+library(rgbif)
+library(udunits2)
+library(units)
+library(sf)
+library(stars)
+library(rworldmap)
+library(CoordinateCleaner)
+library(dismo)
+library(kernlab)
+library(mgcv)
+library(spatialEco)
+library(dplyr)
+library(rgbif)
+library(rnaturalearth)
+library(rJava)
+
+sf_use_s2(FALSE) #Don't assume a sphericical geometry-therefore dist for buffer will be in units of degree
+crul::set_opts(http_version = 2) #For getting gbif queries to work: https://github.com/ropensci/crul/issues/174#issuecomment-1600273273
+```
+
+
+Let's explore the data from this paper: https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/1365-2656.13986. 308 networks of avian-plant interactions. Maybe good? 
+
+Turns out; the Bello dataset is included in this idk why I thought it wasn't :(
+```{r}
+Moulatlet <- read.csv(file="../Data/datalong_v08_06_2023_CLEANED.csv")
+Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::filter(interaction %in% (c(0,1))) %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::rename(., Latitude=lat, Longitude=lon, Frugivore_Species=Scientific, Plant_Species=plant_id) %>%
+  unique()
+
+Moulatletval$interaction <- as.numeric(Moulatletval$interaction)
+
+
+
+counts <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>%
+  group_by(., speciesPair) %>%
+  dplyr::summarise(., pos=sum(interaction), tot=n(), neg=tot-pos)
+
+
+counts <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>% dplyr::select(., speciesPair ) %>% left_join(counts, .) %>% unique()
+                            
+
+counts$prop <- counts$pos/counts$tot  
+
+
+#pdf(file="Figures/MoulatletInterSummary.pdf")
+counts %>% dplyr::filter(., tot>9) %>%
+ggplot(., aes(x=tot, y=prop))+geom_point(position = "jitter")+theme_classic()+ylab("Proportion of Interactions given Coocurence")+xlab("Number of Coocurrences")+ annotate("text", x = 31, y = .25, label = "211 interactions total")+ annotate("text", x = 31, y = .2, label = "44 birds, 37 plants")
+#dev.off()
+
+
+usable <- counts %>% dplyr::filter(., tot>4) %>% unique()#Number of interactions with at least 10 records
+table(usable$ID)
+
+
+Moulatletval <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-"))
+
+usable <- left_join(usable, Moulatletval, by="speciesPair") %>% unique()
+
+length(unique(usable$Frugivore_Species))
+length(unique(usable$Plant_Species))
+
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+usable$Latitude <- as.numeric(usable$Latitude)
+usable$Longitude <- as.numeric(usable$Longitude)
+
+#pdf(file="Figures/MoulatletMap_10occ.pdf", width=11, height=8.5)
+ggplot(data = world) +
+    geom_sf()+theme_classic()+geom_point(data=usable, aes(x=Longitude, y=Latitude))
+#dev.off()
+```
+
+Welp, let's make SDMS of these.
+```{r}
+gbifQuery <- function(name, doplot=FALSE){
+  record <- rgbif::occ_search(scientificName = name, hasGeospatialIssue=FALSE)
+  keynum <- rgbif::name_backbone(name)$usageKey
+  gbif_download <- occ_download(pred("taxonKey", keynum),format = "SIMPLE_CSV", user="riverman12", pwd="1Chicken!!!", email="fostergt@email.sc.edu")
+  
+  
+  occ_download_wait(gbif_download)
+  spdat <- occ_download_get(gbif_download) %>%
+    occ_download_import()
+
+  
+  world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+  ggplot(data = world) +
+      geom_sf()+geom_point(data=spdat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+  
+  if(doplot==TRUE){
+ world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+  ggplot(data = world) +
+      geom_sf()+geom_point(data=p1, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+  }
+  spatsmall <- dplyr::select(spdat, species, decimalLongitude, decimalLatitude)
+  spatsmall <- as.data.frame(spatsmall)
+  return(spatsmall)
+}
+```
+
+Getting data
+```{r}
+#Getting climate data
+Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
+terra::plot(Clima[[1]])
+
+#Here's loading all of these in and merging them
+#tile53 <- raster::stack("worldclim/wc2.1_tiles/tile_53_wc2.1_30s_bio.tif")
+#tile52 <- raster::stack("worldclim/wc2.1_tiles/tile_52_wc2.1_30s_bio.tif")
+#tile29 <- raster::stack("worldclim/wc2.1_tiles/tile_29_wc2.1_30s_bio.tif")
+#tile28 <- raster::stack("worldclim/wc2.1_tiles/tile_28_wc2.1_30s_bio.tif")
+#tile41 <- raster::stack("worldclim/wc2.1_tiles/tile_41_wc2.1_30s_bio.tif")
+#tile40 <- raster::stack("worldclim/wc2.1_tiles/tile_40_wc2.1_30s_bio.tif")
+
+#SA <- terra::merge(tile53, tile52, tile29, tile28, tile41, tile40)
+#plot(SA)
+Climastack <- raster::stack(Clima)
+```
+Performing PCA - Don't Run-This crashes computers!!!
+```{r}
+#Running a PCA over our climatic data
+EnvCoord<-na.omit(raster::rasterToPoints(Climastack)) #Make raster into long df of points
+PcaR<-EnvCoord[,-c(1:2)] #remove latlong for PCA
+#Scale transform 
+DScale <- data.frame(apply(PcaR,2,scale)) #scale
+#Run the  PCA 
+DPca <- prcomp(DScale,retx=TRUE,center=F,scale=F) #run PCA on scaled data
+
+#% of the variation explained
+NEixos<-length(summary(DPca)$importance[3,])
+CumVar<-summary(DPca)$importance[3,]
+VarEx<-data.frame(CumVar)
+
+#Getting the loadings and transforming it into a dataframe
+Eix<-as.data.frame(DPca$x) #Grab the PCA loadings
+EixXY<-cbind(EnvCoord[,(1:2)],Eix) #re add back in the coordinates from earlier
+sp::gridded(EixXY)<- ~x+y #Create large spatial pixels df (prep to reconvert to raster)
+PCAPr<-raster::stack(EixXY) #create a rasterstack for each 
+raster.comb<-PCAPr[[1:(sum(VarEx<=0.95)+1)]] #only include the axis necessary to explain 95% of variation
+plot(raster.comb)
+```
+
+
+```{r}
+spnames <- unique(c(usable$Plant_Species, usable$Frugivore_Species))
+
+for(i in 1:length(spnames)){
+    Occ <- gbifQuery(name=spnames[i], doplot = FALSE)
+    Occ <- dplyr::filter(Occ, is.na(decimalLongitude)==FALSE) %>% unique()
+
+    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurance cells & remove redundant records
+    sf_use_s2(FALSE) #Don't assume a sphericical geometry-therefore dist for buffer will be in units of degree
+  
+    #creating a 200km2 buffer to select the psudo-absence points
+    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects
+    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
+    plot(OccBuffer)
+    
+    
+    
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBuffer2 <-as(OccBuffer, 'Spatial')
+    #terra::plot(OccBuffer2)
+    OccBuffer2 <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBuffer2, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    #plot(OccBufferRas)
+    
+    ##Selecting the pseudo absences
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
+    AllPseudo<-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),]
+    
+    set.seed(1)
+    PseudoA <-sample(x = AllPseudo$cell, size = nrow(Occ))
+    PseudoAdf<- data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA), cell=PseudoA)
+    PseudoAd <- PseudoAdf
+    
+    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2])
+    colnames(Occurrences)<-c('Long','Lat','x','y')
+    
+    
+    id.training<-sample(1:nrow(Occurrences),round(0.75*nrow(Occurrences),0)) 
+    
+    training<-prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")]) 
+    testing<-prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
+    training<-na.omit(training)
+    testing<-na.omit(testing)
+      
+    Occurrences2<-Occurrences
+    colnames(Occurrences2)<-rep(c('Long','Lat'),2)
+    testingPresPA<-rbind.data.frame(Occurrences2[-id.training,1:2],Occurrences2[-id.training,3:4])
+    
+      ##Maxent
+    Sys.setenv(NOAWT=TRUE)
+    Maxent.Model<-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
+    
+    
+    #Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') 
+    
+    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+
+    save(Maxent.Model, Maxent.eval, file=paste("MaxentModels/Maxent_test_", gsub(pattern=" ", spnames[i], replacement="_"), ".Rda", sep=""))
+    rm(Maxent.Model, Maxent.eval)
+}    
+    Climastack
+```
+
+
+
+```{r}
+
+
+
+
+
+
+```
+
