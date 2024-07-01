@@ -60,29 +60,6 @@ sum(table(rowSums(table(amPollinators$species2, amPollinators$network_name))))-s
 ```
 Out of the 166 pollination networks web of life has in the Americas, there are only 29 plant species and 63 pollinator species that occur at 6 or more sites.
 
-Let's check out Mangal and see if we can get some more points
-```{r}
-library(rmangal)
-```
-
-4499	4529	
-```{r eval=FALSE}
-#mgs <- rmangal::search_datasets("pollinator")
-#mgn <- get_collection(mgs)
-
-nodes <- mgn[[1000]]
-mgn[[1]]$interactions
-mgn[[1]]$network
-
-summary(mgn)[[1]]
-
-#save(mgn, amPol, file="data/Mangel_Wol_Query.Rda")
-```
-
-```{r}
-load("data/Mangel_Wol_Query.Rda")
-```
-
 
 I want to try and make a simple SDM that's trained on some aspect of community data. 
 

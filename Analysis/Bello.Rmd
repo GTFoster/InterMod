@@ -161,7 +161,6 @@ SA_nms<-wrld[SouthAme,17] ##Americas
 
 #Getting climate data
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
-Clima <-raster::crop(Clima, SA_nms)
 terra::plot(Clima[[1]])
 
 #Here's loading all of these in and merging them
@@ -229,9 +228,6 @@ terra::plot(raster.comb)
     #plot(OccBufferRas)
 ```
 
-
-
-
 ```{r}
     ##Selecting the pseudo absences
     AllPseudo <- terra::as.points(OccBufferRas)
@@ -284,7 +280,6 @@ trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(
     Occ <- as.data.frame(Occ)
     colnames(Occ) <- c("species", "decimalLongitude", "decimalLatitude")
     Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurrence cells
-  
     #creating a 200km2 buffer to select the psudo-absence points
     Occ <- unique(Occ) #remove redundant records
     OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
@@ -374,6 +369,9 @@ gbifQuery <- function(name, doplot=FALSE){
   spatsmall <- as.data.frame(spatsmall)
   return(spatsmall)
 }
+
+
+
 ```
 
 Plotting suitability based on Gbif data
@@ -487,7 +485,7 @@ Bello$interaction <- 1
 
 colnames(Bello)
 colnames(Moulatletval)
-Composite <- rbind(Moulatletval, Bello)
+Composite <- Moulatletval
 Composite$interaction <- as.numeric(Composite$interaction)
 
 counts <- Composite %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>%
@@ -504,18 +502,36 @@ counts %>% dplyr::filter(., tot>9, ID=="M") %>%
 ggplot(., aes(x=tot, y=prop))+geom_point(position = "jitter")+theme_classic()+ylab("Proportion of Interactions given Coocurence")+xlab("Number of Coocurrences")+ annotate("text", x = 31, y = .25, label = "211 interactions total")+ annotate("text", x = 31, y = .2, label = "44 birds, 37 plants")
 #dev.off()
 
-
-usable <- counts %>% dplyr::filter(., tot>9, ID=="M") #Number of interactions with at least 10 records
+usable <- counts %>% dplyr::filter(., tot>9, ID=="M") %>% unique()#Number of interactions with at least 10 records
 table(usable$ID)
 
 
 Moulatletval <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-"))
 
-usable <- left_join(usable, Moulatletval, by="speciesPair")
+usable <- left_join(usable, Moulatletval, by="speciesPair") %>% unique()
+
 length(unique(usable$Frugivore_Species))
 length(unique(usable$Plant_Species))
+
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+usable$Latitude <- as.numeric(usable$Latitude)
+usable$Longitude <- as.numeric(usable$Longitude)
+
+#pdf(file="Figures/MoulatletMap_10occ.pdf", width=11, height=8.5)
+ggplot(data = world) +
+    geom_sf()+theme_classic()+geom_point(data=usable, aes(x=Longitude, y=Latitude))
+#dev.off()
 ```
 
+Now we've got 2112 potential bird-plant interactions spread across the globe.
+For each, let's pull the requisite bioclim data
+
+```{r}
+
+```
 
 
 ```{r}
@@ -560,5 +576,9 @@ sites <- intOcc %>% dplyr::select(., Longitude, Latitude) %>% dplyr::mutate(., i
 
 sites$inter[is.na(sites$inter)] <- 0
 table(sites$cooc, sites$inter)
+```
+
+```{r}
+
 ```
 
