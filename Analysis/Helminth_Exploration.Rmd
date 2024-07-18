@@ -1,0 +1,87 @@
+---
+title: "Helminths"
+author: "Grant Foster"
+date: "2024-07-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(helminthR)
+library(igraph)
+library(ggplot2)
+library(maps)
+library(rnaturalearth)
+```
+
+Taken from the supplemental materials of Tad and Pedro's 2019 paper
+```{r}
+#mgs <- rmangal::search_datasets("pollinator")
+#mgn <- get_collection(mgs)
+
+load(file="../Data/Mangel_Wol_Query.Rda")
+```
+
+
+```{r}
+world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+ggplot(data = world) +
+    geom_sf()+theme_classic()+geom_point(data=helminthR::locations, aes(x=Longitude, y=Latitude))
+
+head(helminthR::locations)
+```
+
+
+```{r}
+
+
+amPol$interaction <- 1
+
+pollInts <- amPol %>% dplyr::select(., species2, species1, interaction, latitude, longitude) %>% dplyr::rename(., Latitude=latitude, Longitude=longitude, Frugivore_Species=species2, Plant_Species=species1) %>%
+  unique()
+
+
+pollInts
+
+pollInts$interaction <- as.numeric(pollInts$interaction)
+
+z <- pollInts %>% dplyr::select(., Plant_Species, Latitude, Longitude) %>% unique() %>% dplyr::select(., Plant_Species) %>% table() %>% as.data.frame()
+as.data.frame(z)
+
+
+pollInts$FrugpollIntsivore_Species <- sub("^(\\S*\\s+\\S+).*", "\\1", pollInts$Frugivore_Species) #Remove all text after second space
+pollInts$Plant_Species <- sub("^(\\S*\\s+\\S+).*", "\\1", pollInts$Plant_Species) #Remove all text after second space
+
+exPoll <- NULL
+nsites <- length(unique(pollInts$Latitude))
+for(i in 1:nsites){
+  temp <- dplyr::filter(pollInts, Latitude==unique(pollInts$Latitude)[i])
+  nms_temp <- expand(temp, Frugivore_Species, Plant_Species)
+  nms_temp <- left_join(nms_temp, temp, by=c("Frugivore_Species", "Plant_Species"))
+  nms_temp$interaction[is.na(nms_temp$interaction)==TRUE] <- 0
+  nms_temp$Latitude <- rep(temp$Latitude[1], nrow(nms_temp))
+  nms_temp$Longitude <- rep(temp$Longitude[1], nrow(nms_temp))
+  
+  exPoll <- rbind(exPoll, nms_temp)
+}
+  
+
+
+
+counts <- exPoll %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>%
+  group_by(., speciesPair) %>%
+  dplyr::summarise(., pos=sum(interaction), tot=n(), neg=tot-pos)
+                            
+
+counts$prop <- counts$pos/counts$tot  
+val <- dplyr::filter(counts, tot>9)
+
+
+usable <- dplyr::filter(val, !grepl(" sp",speciesPair))
+```
+

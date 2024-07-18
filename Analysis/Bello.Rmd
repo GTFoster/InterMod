@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+options(java.parameters = "-Xmx20g") #Java Heap Space Limits for Maxent
 library(raster)
 library(tidyverse)
 library(terra)
@@ -173,7 +174,7 @@ terra::plot(Clima[[1]])
 
 #SA <- terra::merge(tile53, tile52, tile29, tile28, tile41, tile40)
 #plot(SA)
-Climastack <- raster::stack(Clima)
+Climastack <- raster::stack(Clima)f
 ```
 
 
@@ -415,33 +416,124 @@ points(x=intOcc$Longitude, y=intOcc$Latitude)
 plot(GBif_Interact)
 points(x=intOcc$Longitude, y=intOcc$Latitude)
 ```
-
+Creating Conceptual figure inset files
 
 ```{r}
-png(file="Figures/ToucanOcc.png", width=480, height=480)
-plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
-points(x=RdOcc$decimalLongitude, y=RdOcc$decimalLatitude, cex=0.1)
-dev.off()
+#png(file="Figures/ToucanOcc.png", width=480, height=480)
 
-png(file="Figures/PalmOcc.png", width=480, height=480)
+
+
+SA <- ne_countries(scale = "medium",continent = "South America",  returnclass = "sv")
+
+#dev.off()
+
+#png(file="Figures/PalmOcc.png", width=480, height=480)
 plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
 points(x=EeOcc$decimalLongitude, y=EeOcc$decimalLatitude, cex=0.1)
-dev.off()
+#dev.off()
 
-png(file="Figures/PalmOcc.png", width=480, height=480)
+#png(file="Figures/PalmOcc.png", width=480, height=480)
 plot(Clima[[1]], ylab="Latitude", xlab="Longitude")
 #points(x=EeOcc$decimalLongitude, y=EeOcc$decimalLatitude, cex=0.1)
+#dev.off()
+
+cropped_EEMaxent <- crop(EEMaxent$prediction, y=c(-80, -20, -35, -15))
+
+
+
+#Creating file for EE occurances
+pdf(file="PosterFigs/palmOcc.pdf", width=5.5, height=4.5)
+plot(cropped_EEMaxent,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, col="white", legend=F)
+points(x=EeOcc$decimalLongitude, y=EeOcc$decimalLatitude, cex=0.1, col="#004d40ff", ylim=c(-40, 5), xlim=c(-80, -20))
+plot(terra::crop(y=cropped_EEMaxent,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
 dev.off()
 
-png(file="Figures/PalmSuit.png", width=480, height=480)
-plot(EEMaxent$prediction, ylab="Latitude", xlab="Longitude", labs="Habitat Suitability", legend.args = list(text = 'Habitat Suitability', side = 4, 
+
+
+#Creating file for Palm Suitability
+pdf(file="PosterFigs/palmSuit.pdf", width=5.5, height=4.5)
+plot(cropped_EEMaxent,ylim=c(-40, 10), xlim=c(-100, -20), axes=F,legend.args = list(text = 'Habitat Suitability', side = 4, 
          font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_EEMaxent,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
 dev.off()
 
-png(file="Figures/ToucanSuit.png", width=480, height=480)
+
+
+
+
+cropped_ToucanMaxent<- crop(RdMaxent$prediction, y=c(-80, -20, -35, -15))
+
+#Creating file for Toucan Occurances
+pdf(file="PosterFigs/toucanOcc.pdf", width=5.5, height=4.5)
+subsample <- RdOcc[sample(1:nrow(RdOcc), size=3500, replace=F),]
+plot(cropped_ToucanMaxent,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, ,  legend=F, col="white")
+points(x=subsample$decimalLongitude[], y=subsample$decimalLatitude, cex=0.1, col="#d81b60ff", ylim=c(-40, 5), xlim=c(-80, -20))
+plot(terra::crop(y=cropped_ToucanMaxent,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+dev.off()
+
+#Creating file for Toucan Suitability
+pdf(file="PosterFigs/toucanSuit.pdf", width=5.5, height=4.5)
+plot(cropped_ToucanMaxent,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, legend.args = list(text = 'Habitat Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_ToucanMaxent,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+dev.off()
+
+
+
+cropped_MaxentInt<- crop(GBif_Interact, y=c(-80, -20, -35, -15))
+
+
+#Creating file for interaction suitability
+pdf(file="PosterFigs/interSuit.pdf", width=5.5, height=4.5)
+plot(cropped_MaxentInt,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, legend.args = list(text = 'Predicted Interaction Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_MaxentInt,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+dev.off()
+
+
+
+
+#png(file="Figures/ToucanSuit.png", width=480, height=480)
 plot(RdMaxent$prediction, ylab="Latitude", xlab="Longitude", labs="Habitat Suitability", legend.args = list(text = 'Habitat Suitability', side = 4, 
          font = 2, line = -1.5, cex = 1))
+#dev.off()
+
+
+plot(cropped_MaxentInt,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, legend.args = list(text = 'Predicted Interaction Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_MaxentInt,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+
+
+interdf <- terra::as.data.frame(cropped_MaxentInt, na.rm=T, xy=T)
+toucandf <- terra::as.data.frame(cropped_ToucanMaxent, na.rm=T, xy=T)
+plantandf <- terra::as.data.frame(cropped_EEMaxent, na.rm=T, xy=T)
+
+negprobs <- plantandf$layer-toucandf$layer-2*interdf$layer
+negprobs[negprobs<0] <- 0
+subsampled_inters <- interdf[sample(1:nrow(interdf), size=15, prob=interdf$layer, replace = F),] #Sample our interaction df with prob values = interaction suitability (good performing model)
+subsamples_neg  <- interdf[sample(1:nrow(interdf), size=15, prob=negprobs, replace = F),] #Subsample background points where species don't interact
+
+
+pdf(file="PosterFigs/InteractionConcept.pdf", width=5.5, height=4.5)
+plot(cropped_MaxentInt,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, legend.args = list(text = 'Predicted Interaction Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_MaxentInt,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+points(x=subsampled_inters$x, y=subsampled_inters$y, col="black", pch=16)
+points(x=subsamples_neg$x, y=subsamples_neg$y, col="black", pch=1)
 dev.off()
+
+
+rand_ids <- rbind(subsampled_inters, subsamples_neg)
+```
+
+```{r}
+set.seed(1)
+#pdf(file="PosterFigs/LowFidelityConcept.pdf", width=5.5, height=4.5)
+plot(cropped_MaxentInt,ylim=c(-40, 10), xlim=c(-100, -20), axes=F, legend.args = list(text = 'Predicted Interaction Suitability', side = 4, 
+         font = 2, line = -1.5, cex = 1))
+plot(terra::crop(y=cropped_MaxentInt,x=SA), ylab="Latitude", xlab="Longitude", add=TRUE)
+points(x=rand_ids$x, y=rand_ids$y, col=sample(c("red", "blue"), size=nrow(rand_ids), replace=T), pch=16)
+#dev.off()
 ```
 
 

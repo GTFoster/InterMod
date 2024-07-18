@@ -87,6 +87,7 @@ usable$Longitude <- as.numeric(usable$Longitude)
 ggplot(data = world) +
     geom_sf()+theme_classic()+geom_point(data=usable, aes(x=Longitude, y=Latitude))
 #dev.off()
+
 ```
 
 Welp, let's make SDMS of these.
@@ -99,12 +100,12 @@ gbifQuery <- function(name, doplot=FALSE){
   
   occ_download_wait(gbif_download)
   spdat <- occ_download_get(gbif_download) %>%
-    occ_download_import()
+    occ_download_import() # download data
 
   
   world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
-  ggplot(data = world) +
-      geom_sf()+geom_point(data=spdat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
+  #ggplot(data = world) +
+      #geom_sf()+geom_point(data=spdat, aes(x=decimalLongitude, y=decimalLatitude))+theme_classic()
   
   if(doplot==TRUE){
  world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
@@ -116,6 +117,61 @@ gbifQuery <- function(name, doplot=FALSE){
   return(spatsmall)
 }
 ```
+
+
+
+```{r}
+spnames <- unique(c(usable$Plant_Species, usable$Frugivore_Species))
+comp_occs <- NULL
+
+iters <- 35
+
+for(i in 1:iters){
+  filnam <- spnames[i] %>% tolower() %>% gsub(pattern=" ", replacement="_") %>% paste("data/GBIF/occs/", .,".csv", sep="")
+  
+    temp <- read.csv(file=filnam)
+    if(nrow(temp)==0){
+      next
+    }
+    occ <- temp %>% dplyr::select(., decimalLongitude, decimalLatitude, species) %>% dplyr::filter(., is.na(decimalLongitude)==FALSE) %>% unique()
+
+    occ['cells'] <-terra::cellFromXY(object= Clima[[1]], xy = occ[,1:2]) #Grab the occurance cells & remove redundant records
+    sf_use_s2(FALSE) #Don't assume a spherical geometry-therefore dist for buffer will be in units of degree
+  
+    #creating a 200km2 buffer to select the psudo-absence points
+    OccSf <-sf::st_as_sf(x=occ[,1:2], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84
+  
+    OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects
+    OccBuffer <-sf::st_union(OccBuffer) #Merge buffer objects into one
+    #plot(OccBuffer)
+
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBuffer2 <-as(OccBuffer, 'Spatial')
+    #terra::plot(OccBuffer2)
+    OccBuffer2 <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBuffer2, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    #plot(OccBufferRas)
+    
+    ##Selecting the pseudo absences. Since I'm doing 1:1 Presence:Psuedoabsence, I'm saving the cell number in the df as a seperate column. 
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo,cell=T)
+    AllPseudo<-AllPseudo[-(which(AllPseudo$cell %in% occ$cells)),]
+    occ$psuedocell <- sample(AllPseudo$cell, size=nrow(occ), replace=F)
+    
+    comp_occs <- rbind(comp_occs, occ) #rbind lates species to composite df
+    if(i%%10==0){ #if it's an interval of 10 save just in case
+      write.csv(comp_occs, file="data/comp_occurances.csv", row.names = F)
+    }
+    if(i==iters){ #if it's the full number of spp, then do save the final file. 
+      write.csv(comp_occs, file="data/comp_occurances.csv", row.names = F)
+    }
+    print(i)
+}
+```
+
+
 
 Getting data
 ```{r}
@@ -135,13 +191,36 @@ terra::plot(Clima[[1]])
 #plot(SA)
 Climastack <- raster::stack(Clima)
 ```
+
+
+
+
+
+
 Performing PCA - Don't Run-This crashes computers!!!
 ```{r}
+comp_occs <- read.csv(file="data/comp_occurances.csv")
+comp_occs$PA <- 1 #Add a 1 to the presence absence file-my b, changed my mind how I wanted things organized
+
+abs <- dplyr::select(comp_occs, -cells) %>% dplyr::mutate(., decimalLongitude=NA, decimalLatitude=NA, PA=0) %>% dplyr::rename(., cells=psuedocell)
+pres <- dplyr::select(comp_occs, -psuedocell)
+
+comp_long <- rbind(abs, pres)
+rm(abs, pres)
+```
+
+```{r}
+#c(comp_occs$cells, comp_occs$cells)
+ext <- terra::extract(Climastack, comp_long$cells)
+
+comp_long$na_pres <- is.na(ext[,1]) #Add
+
 #Running a PCA over our climatic data
-EnvCoord<-na.omit(raster::rasterToPoints(Climastack)) #Make raster into long df of points
-PcaR<-EnvCoord[,-c(1:2)] #remove latlong for PCA
+#EnvCoord<-na.omit(raster::rasterToPoints(Climastack)) #Make raster into long df of points
+#PcaR<-EnvCoord[,-c(1:2)] #remove latlong for PCA
+
 #Scale transform 
-DScale <- data.frame(apply(PcaR,2,scale)) #scale
+DScale <- data.frame(apply(na.omit(ext),2,scale)) %>% na.omit()#scale
 #Run the  PCA 
 DPca <- prcomp(DScale,retx=TRUE,center=F,scale=F) #run PCA on scaled data
 
@@ -152,58 +231,41 @@ VarEx<-data.frame(CumVar)
 
 #Getting the loadings and transforming it into a dataframe
 Eix<-as.data.frame(DPca$x) #Grab the PCA loadings
-EixXY<-cbind(EnvCoord[,(1:2)],Eix) #re add back in the coordinates from earlier
-sp::gridded(EixXY)<- ~x+y #Create large spatial pixels df (prep to reconvert to raster)
-PCAPr<-raster::stack(EixXY) #create a rasterstack for each 
+
+EixXY <- comp_long %>% dplyr::filter(., na_pres==FALSE) %>% cbind(., Eix) 
+EixXY <- terra::xyFromCell(Clima,EixXY$cells) %>% cbind(., EixXY)
+
+spob <- EixXY %>% dplyr::select(., -decimalLongitude, -decimalLatitude, -species, -cells, -PA, -na_pres) %>% unique()
+
+#EixXY<-cbind(ext[,(1:2)],Eix) #re add back in the coordinates from earlier
+sp::gridded(spob)<- ~x+y #Create large spatial pixels df (prep to reconvert to raster)
+PCAPr <-raster::stack(spob) #create a rasterstack for each 
 raster.comb<-PCAPr[[1:(sum(VarEx<=0.95)+1)]] #only include the axis necessary to explain 95% of variation
 plot(raster.comb)
 ```
 
 
-```{r}
-spnames <- unique(c(usable$Plant_Species, usable$Frugivore_Species))
+
+
+
+
+Given our records, here are our Maxent Models
+
+```{r, eval=TRUE}
 
 for(i in 1:length(spnames)){
-    Occ <- gbifQuery(name=spnames[i], doplot = FALSE)
-    Occ <- dplyr::filter(Occ, is.na(decimalLongitude)==FALSE) %>% unique()
-
-    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurance cells & remove redundant records
-    sf_use_s2(FALSE) #Don't assume a sphericical geometry-therefore dist for buffer will be in units of degree
-  
-    #creating a 200km2 buffer to select the psudo-absence points
-    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
-                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
-    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects
-    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
-    plot(OccBuffer)
+    Occ <- dplyr::filter(comp_occs, species==spnames[i]) #Filter to target species
+    Pspots <- terra::xyFromCell(Clima, Occ$cells) %>% as.data.frame() %>% dplyr::rename(., "Long"=x, "Lat"=y) #Extract presence xy
+    Aspots <- terra::xyFromCell(Clima, Occ$psuedocell) %>% as.data.frame() #extract absence xy
     
-    
-    
-    ##Masking the buffer so that it does not occur in the ocean
-    OccBuffer2 <-as(OccBuffer, 'Spatial')
-    #terra::plot(OccBuffer2)
-    OccBuffer2 <- terra::vect(OccBuffer)
-    OccBufferRas <-terra::rasterize(x = OccBuffer2, y=Clima)
-    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
-    #plot(OccBufferRas)
-    
-    ##Selecting the pseudo absences
-    AllPseudo <- terra::as.points(OccBufferRas)
-    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
-    AllPseudo<-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),]
-    
-    set.seed(1)
-    PseudoA <-sample(x = AllPseudo$cell, size = nrow(Occ))
-    PseudoAdf<- data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA), cell=PseudoA)
-    PseudoAd <- PseudoAdf
-    
-    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2])
-    colnames(Occurrences)<-c('Long','Lat','x','y')
-    
+    Occurrences <- cbind(Pspots, Aspots)
     
     id.training<-sample(1:nrow(Occurrences),round(0.75*nrow(Occurrences),0)) 
     
-    training<-prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")]) 
+    #plot(raster.comb[[1]])
+    #points(x=Occurrences$Long, y=Occurrences$Lat)
+  
+    training <-dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")]) 
     testing<-prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
     training<-na.omit(training)
     testing<-na.omit(testing)
@@ -216,7 +278,6 @@ for(i in 1:length(spnames)){
     Sys.setenv(NOAWT=TRUE)
     Maxent.Model<-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
     
-    
     #Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') 
     
     Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
@@ -224,17 +285,7 @@ for(i in 1:length(spnames)){
     save(Maxent.Model, Maxent.eval, file=paste("MaxentModels/Maxent_test_", gsub(pattern=" ", spnames[i], replacement="_"), ".Rda", sep=""))
     rm(Maxent.Model, Maxent.eval)
 }    
-    Climastack
-```
-
-
-
-```{r}
-
-
-
-
-
 
 ```
+
 
