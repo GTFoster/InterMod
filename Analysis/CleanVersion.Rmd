@@ -1,0 +1,201 @@
+---
+title: "Cleaning"
+author: "Grant Foster"
+date: "2024-10-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+# Querying interaction data
+
+Frugivory networks from Moulatlet 2023
+```{r}
+Moulatlet <- read.csv(file="../Data/datalong_v08_06_2023_CLEANED.csv") #Read in moulet interaction data
+Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% #Filter down to unique interactions
+  dplyr::filter(interaction %in% (c(0,1))) %>%  
+  dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% 
+  dplyr::rename(., Latitude=lat, Longitude=lon, Frugivore_Species=Scientific, Plant_Species=plant_id) %>%
+  unique()
+
+Moulatletval$interaction <- as.numeric(Moulatletval$interaction) #Make sure col is numeric
+
+Mcounts <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>% #Make a "Species-pair" col
+  group_by(., speciesPair) %>% #group by this
+  dplyr::summarise(., pos=sum(interaction), tot=n(), neg=tot-pos) #count the number of positive and negative interaction presences across the Moulatletval data
+
+Mcounts$prop <- Mcounts$pos/Mcounts$tot  #Calculate the total prevalence of interactions across all coocurences
+
+
+#pdf(file="Figures/MoulatletInterSummary.pdf")
+Mcounts %>% dplyr::filter(., tot>9) %>%
+ggplot(., aes(x=tot, y=prop))+geom_point(position = "jitter")+theme_classic()+ylab("Proportion of Interactions given Coocurence")+xlab("Number of Coocurrences")+ annotate("text", x = 31, y = .25, label = "211 interactions total")+ annotate("text", x = 31, y = .2, label = "44 birds, 37 plants")
+#dev.off()
+
+
+usable <- Mcounts %>% dplyr::filter(., tot>4 & prop>0) %>% unique()#Number of interactions with at least 5 records, and interact at at least 1 site. 
+
+Moulatletval <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) #Create Species-pair column
+
+usable <- left_join(usable, Moulatletval, by="speciesPair") %>% unique() #Grab the usable interactions w/lat-long data
+
+length(unique(usable$Frugivore_Species))
+length(unique(usable$Plant_Species))
+
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+usable$Latitude <- as.numeric(usable$Latitude)
+usable$Longitude <- as.numeric(usable$Longitude)
+
+#pdf(file="Figures/MoulatletMap_10occ.pdf", width=11, height=8.5)
+ggplot(data = world) +
+    geom_sf()+theme_classic()+geom_point(data=usable, aes(x=Longitude, y=Latitude))
+#dev.off()
+```
+
+Now let's do plant-pollinator networks from WOL
+
+Querying the web of life API. 
+Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
+```{r}
+# define the base url
+base_url <- "https://www.web-of-life.es/"   
+json_url2 <- paste0(base_url,"get_networks.php?interaction_type=Pollination") 
+
+WolPols <- jsonlite::fromJSON(json_url2)
+WolMeta <- read.csv(paste0(base_url,"get_network_info.php")) %>%dplyr::filter(., network_type%in%"Pollination")
+length(unique(WolPols$network_name)) # 174 Networks
+```
+
+Downloading the metaData on Wol data so that we have geometries
+```{r}
+WolMeta <- read.csv(paste0(base_url,"get_network_info.php"))
+WolMeta <- WolMeta %>% dplyr::filter(., network_type%in%"Pollination") #Make sure we have only pollination
+length(unique(WolMeta$network_name)) #174 networks
+WolMeta <- WolMeta %>% dplyr::select(., network_name, region, latitude, longitude) %>% left_join(WolPols, ., by="network_name")
+```
+
+```{r}
+WolMeta <- WolMeta %>% 
+    mutate(ID = group_indices(WolMeta, .dots=c("latitude", "longitude"))) #Some networks are grouped across time but are at the same site-I'm adding a grouping column for those here. 
+
+Wolsumm <- dplyr::select(WolMeta, ID, longitude, latitude, species1, species2) %>% unique() %>%#Grab uniques
+  dplyr::rename(., Plant_Species=species1, Pollinator_Species=species2)
+Wolsumm$interaction<- 1 #All these were observed in the WOL data
+
+#Below we add all of the unobserved but potential interactions at each site (Ex. If a plant and a pollinator are both recorded in a site but don't have a recorded interaction, this adds that as a row with a "0" in the interaction columns)
+exPoll <- NULL
+nsites <- length(unique(Wolsumm$ID)) #Look across each sites
+for(i in 1:nsites){
+  temp <- dplyr::filter(Wolsumm, ID==unique(Wolsumm$ID)[i]) #Grab the recorded interaction
+  nms_temp <- expand(temp, Pollinator_Species, Plant_Species) #Expand to all possible interactions
+  nms_temp <- left_join(nms_temp, temp, by=c("Pollinator_Species", "Plant_Species")) #Grab the true interactions
+  nms_temp$interaction[is.na(nms_temp$interaction)==TRUE] <- 0 #The NAs left are unobserved at this site
+  nms_temp$latitude <- rep(temp$latitude[1], nrow(nms_temp)) #Grab the correct spatial info + NetID
+  nms_temp$longitude <- rep(temp$longitude[1], nrow(nms_temp))
+  nms_temp$ID <- rep(temp$ID[1], nrow(nms_temp))
+  exPoll <- rbind(exPoll, nms_temp) #save to my output object
+}
+```
+
+Repeat the process from above to find the usuable sets of plant-pollinator interactions. 
+
+```{r}
+pol2 <- exPoll %>% dplyr::mutate(., speciesPair=paste(Pollinator_Species, Plant_Species, sep="-")) %>% #Make a "Species-pair" col
+  group_by(., speciesPair) %>% #group by this
+  dplyr::mutate(., pos=sum(interaction), tot=n(), neg=tot-pos)#count the number of positive and negative interaction presences across the Moulatletval data
+pol2$prop <- pol2$pos/pol2$tot
+
+usable_Pol <-pol2 %>% dplyr::filter(., tot>4 & prop>0) %>% unique() #Filter to those that cooccur at at least 4 sites
+
+usable_Pol <- dplyr::filter(usable_Pol, grepl(" sp\\d+", speciesPair)==F) #remove entries not ID'ed to species
+length(unique(usable_Pol$speciesPair)) 
+```
+
+
+
+```{r}
+WolMeta$speciesPair <- paste(WolMeta$species2, WolMeta$species1, sep="-")
+
+WolUsable <- left_join(usable_Pol, WolMeta, by="speciesPair")
+length(unique(WolUsable$species1))
+length(unique(WolUsable$species2))
+```
+Below we create a df called "dat" which contains all the interactions that fit our criterion across both network types. 
+```{r}
+colnames(usable)
+usable2 <- dplyr::rename(usable, Animal_Species=Frugivore_Species) %>% dplyr::select(., "speciesPair", "Animal_Species", "Plant_Species", "interaction", "pos","neg","tot","prop","Longitude","Latitude")
+usable2$Class <- "Frug"
+
+
+usable_Pol2 <- usable_Pol %>% dplyr::rename(., Animal_Species=Pollinator_Species, Longitude=longitude, Latitude=latitude) %>% dplyr::select(., "speciesPair", "Animal_Species", "Plant_Species", "interaction", "pos","neg","tot","prop","Longitude","Latitude")
+usable_Pol2$Class <- "Poll"
+
+dat <- rbind(usable2, usable_Pol2)
+```
+
+Edit: Previously I was working with Mangel, but turns out it's already included in wol. Womp womp. 
+
+
+# Quantifying interaction specialism
+
+```{r}
+FrugPartners <- dplyr::filter(Moulatletval, Frugivore_Species %in% dat$Animal_Species) #All interactions with the focal frugivore species
+PollPartners <- dplyr::filter(WolPols, species2 %in% dat$Animal_Species) #All interactions with the focal pollinator species
+
+trait_vector <- c("leaf area", "maximum fruit length", "maximum whole plant height", "maximum whole plant longevity", "minimum fruit length", "plant fruiting duration", "seed length", "seed mass", "whole plant height")
+
+plants <- unique(FrugPartners$Plant_Species, WolPols$species1)
+plants <- plants[grepl("\\d", plants)==FALSE]
+
+save(plants, file="BIENstuff.Rda")
+```
+
+Query those plants in BIEN
+```{r}
+plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running this all at once, so I split the query into 4 files of ~1k-1.5K each  
+
+#write.csv(plant_traits, file="data/traits/plant_traits5K.csv", row.names = F)
+
+```
+Loading in those plant traits and taking species-level averages
+
+```{r}
+
+dat1 <- read.csv(file="data/traits/plant_traits1K.csv")
+dat2 <- read.csv(file="data/traits/plant_traits2K.csv")
+dat34 <- read.csv(file="data/traits/plant_traits3-4K.csv")
+dat5 <- read.csv(file="data/traits/plant_traits5K.csv")
+
+ptraits <- rbind(dat1, dat2, dat34, dat5)
+
+psums <- ptraits %>% group_by(., scrubbed_species_binomial, trait_name) %>%  dplyr::summarise(trait_mean=mean(trait_value, na.rm = TRUE))
+
+ptrats_quant <- ptraits %>% dplyr::filter(., is.na(unit)==FALSE)
+ptrats_quant$trait_value <- as.numeric(ptrats_quant$trait_value)
+
+ptrats_qual <- ptraits %>% dplyr::filter(., is.na(unit)==TRUE)
+
+ptraitsum <- ptrats_quant %>% group_by(., scrubbed_species_binomial, trait_name) %>%  dplyr::summarise(trait_mean=mean(trait_value, na.rm = TRUE)) %>% dplyr::filter(., trait_mean>0)
+```
+
+# Querying GBIF occurence points
+
+We did some querying on another machine; let's see what data we've got
+```{r}
+
+```
+
+# Creating SDMS
+
+# Analyzing SDM outputs
+

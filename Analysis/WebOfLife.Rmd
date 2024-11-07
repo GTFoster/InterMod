@@ -16,7 +16,7 @@ library(rjson)
 library(tidyverse)
 ```
 
-Quering the web of life API. 
+Querying the web of life API. 
 Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
 ```{r}
 # define the base url

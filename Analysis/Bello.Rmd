@@ -161,7 +161,7 @@ SouthAme<-which(wrld$continent=='South America')
 SA_nms<-wrld[SouthAme,17] ##Americas
 
 #Getting climate data
-Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
+Clima <- geodata::worldclim_global("worldclim", var="bio", res=10)
 terra::plot(Clima[[1]])
 
 #Here's loading all of these in and merging them

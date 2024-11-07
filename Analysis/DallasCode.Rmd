@@ -1,0 +1,1090 @@
+---
+title: "Species roles in host-helminth networks"
+author: "Tad Dallas and Pedro Jordano"
+includes:
+  in_header:
+    - \usepackage{lmodern}
+output:
+  pdf_document:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 6
+    toc: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 6
+    highlight: tango
+    theme: journal
+---
+
+
+
+
+
+# Libraries
+
+```{r}
+
+library(plyr)
+library(dplyr)
+library(tibble)
+library(helminthR)
+library(igraph)
+library(snow)
+library(RColorBrewer)
+library(taxize)
+library(phylobase)
+library(adephylo)
+library(picante)
+library(ape)
+library(rworldmap)
+
+```
+
+
+
+
+
+# Colors
+
+```{r}
+
+colz <- c('dodgerblue3', '#00c07f', 'grey', '#C70039')
+colz2 <- c('#28464B', '#E3DAFF', '#B4E7CE') 
+colz3 <- brewer.pal(5, 'Set1')
+
+
+```
+
+
+
+
+
+## Get the interaction networks
+
+```{r}
+
+dat <- list()
+locs <- locations$Location
+for(i in 1:length(locs)){
+  tmp <- try(helminthR::findLocation(location=locs[i], hostState=1, 
+      speciesOnly=TRUE, validateHosts=FALSE, removeDuplicates=TRUE))
+  if(inherits(tmp, 'try-error')){
+    dat[[i]] <- NA
+  }else{
+    tmp$Host <- trimws(tmp$Host)
+    tmp$Parasite <- trimws(tmp$Parasite)
+    dat[[i]] <- tmp
+    print(i)
+  }
+}
+names(dat) <- locs
+
+dat <- dat[which(!is.na(dat))]
+dat <- dat[which(sapply(dat, function(x){all(is.na(x))}) == FALSE)]
+
+```
+
+
+
+
+
+
+
+Make sure no parasite species are included in the host column by validating against the DF you create below with parasite group information. Also, remove species whose name length is 1 if you strsplit by a ' '. That way, we are sure that species have both genus and species names. 
+
+
+
+```{r}
+
+dat <- lapply(dat, function(x){
+  if(any(x$Host %in% groupDF$species)){
+    x <- x[-which(x$Host %in% groupDF$species), ]
+  }
+  x <- x[which(sapply(strsplit(x[,1], ' '), length) > 1), ]
+  x <- x[which(sapply(strsplit(x[,2], ' '), length) > 1), ]  
+  return(x)
+})
+
+dat <- dat[which(sapply(dat,nrow) > 10)]
+
+idat <- lapply(dat, function(x){
+  tmp <- table(x[,1], x[,2])
+  graph_from_incidence_matrix(tmp)
+})
+
+datTib <- tibble(location=names(dat), 
+  edgelist=dat, 
+  network=idat)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+## Breaking it down by parasite group
+
+This will be used later to examine differences among parasite groups. It's basically a hacky way to identify which taxonomic group each parasite is in. 
+
+
+```{r}
+
+nm <- as.character(unique(unlist(sapply(dat, function(x){x[,2]}))))
+
+type <- c('Cestodes', 'Acanthocephalans', 'Monogeneans', 
+  'Nematodes', 'Trematodes', 'Turb')
+
+out <- c()
+
+for(i in 1:length(nm)){
+  ret <- sapply(type, function(x){
+    nrow(helminthR::findParasite(unlist(strsplit(nm[i], ' '))[1],
+      unlist(strsplit(nm[i], ' '))[2], group=x))
+  })
+  out[i] <- type[which.max(ret)]
+  print(i)
+}
+
+groupDF <- data.frame(species=nm, group=out)
+
+```
+
+
+
+
+
+
+
+Subset data to pre-emptively deal with reviewer concerns around including aquatic/marine host-helminth combinations (NoWater) and data quality issues (NoNest; removes nested locations and ambiguous locations). 
+
+```{r}
+
+datNoWater <- dat[which(names(dat) %in% locInfo$name[which(locInfo$water+locInfo$coast == 0 )])]
+datNoNest <- dat[which(names(dat) %in% locInfo$name[which(locInfo$remove == 0)])]
+
+idatNoWater <- idat[which(names(idat) %in% locInfo$name[which(locInfo$water+locInfo$coast == 0 )])]
+idatNoNest  <- idat[which(names(idat) %in% locInfo$name[which(locInfo$remove == 0)])]
+
+```
+
+
+
+
+
+
+
+
+## Species role defined in the c-z phase space
+
+
+```{r}
+
+#' Calculate c (among module connectivity) and z 
+#' (within module degree) from Olesen approach
+#'
+#' @param g a graph object
+#'
+#' @return data.frame containing c and z
+
+getCZ <- function(g){
+  require(igraph)
+  require(plyr)
+  require(dplyr)
+  mod <- cluster_walktrap(g)
+  mem <- membership(mod)
+  ret <- data.frame(node=V(g)$name,
+    host=V(g)$type, degree=degree(g))
+ 
+  modules <- unique(mem)
+  wiList <- lapply(modules, function(x){
+    tmp <- induced_subgraph(g, mem == x)    
+    out <- data.frame(node=V(tmp)$name, withinDegree=degree(tmp))
+  })  
+
+  wiDegree <- do.call(rbind, wiList) 
+  ret2 <- left_join(ret, wiDegree, by='node')  
+  ret2$btwnDegree <- ret2$degree - ret2$withinDegree
+  ret2$withinZ <- (ret2$withinDegree - mean(ret2$withinDegree)) / 
+    sd(ret2$withinDegree)
+  ret2$participation <- 1 - ((ret2$withinDegree / ret2$degree)**2)
+  return(ret2)
+}
+
+
+```
+
+
+
+
+
+```{r}
+
+czDF <- ldply(idatNoNest, getCZ)
+
+```
+
+
+
+
+
+```{r}
+
+#' Classify roles given c and z values
+#'
+#' @param czDF data.frame output from getCZ function
+#'
+#' @return vector of classifications (length is nrow(czDF))
+
+classifyRoles <- function(x){
+  ret <- rep(NA, nrow(x))
+  ret[which(x$withinZ <= 1.65 & x$participation <= 0.75)] <- 'peripheral'
+  ret[which(x$withinZ >= 1.65 & x$participation <= 0.75)] <- 'mHubs'
+  ret[which(x$withinZ > 1.65 & x$participation > 0.75)] <- 'nHubs'
+  ret[which(x$withinZ < 1.65 & x$participation > 0.75)] <- 'connector'
+  return(ret)
+}
+
+```
+ 
+
+
+
+```{r}
+
+globalGrph <- do.call(rbind, datNoNest)
+globalGrph <- as.data.frame.matrix(table(unique(globalGrph[,c(1,2)])))
+globalCZ <- getCZ(graph_from_incidence_matrix(globalGrph))
+globalCZ$role <- classifyRoles(globalCZ)
+
+
+czDF$role <- classifyRoles(czDF)
+
+czDF2 <- czDF %>% 
+  group_by(node) %>%
+  summarise(
+    numLocations=length(unique(.id)),
+    host=host[1],
+    connector=sum(role=='connector'),
+    mHubs=sum(role=='mHubs'),
+    nHubs=sum(role=='nHubs'),
+    peripheral=sum(role=='peripheral'), 
+    mnWithinZ = mean(withinZ, na.rm=TRUE),
+    sdWithinZ = sd(withinZ, na.rm=TRUE),
+    mnPart = mean(participation, na.rm=TRUE),
+    sdPart = sd(participation, na.rm=TRUE)
+  )
+
+```
+
+
+
+```{r}
+
+cz2S <- czDF2
+cz2S[,c(4:7)] <- cz2S[,c(4:7)] / rowSums(cz2S[,c(4:7)])
+
+levelplot(t(as.matrix(cz2S[,c(4:7)])), aspect=1)
+
+```
+
+
+
+
+
+
+
+
+
+
+Some fun plotting
+
+```{r}
+
+plot(czDF$withinDegree, czDF$btwnDegree, 
+  pch=16, col=adjustcolor('dodgerblue', 0.25), 
+  las=1, xlab='Within-module degree',
+  ylab='Between-module degree')
+
+
+
+
+pdf('spRole.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+plot(czDF$participation, czDF$withinZ, 
+  pch=16, col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.25)[as.numeric(as.factor(czDF$role))], 
+  las=1, 
+  xlab=expression(paste('Among module connectivity (',italic(c),')')),
+  ylab=expression(paste('Within module degree (', italic(z),')')),
+  xlim=c(0,1), ylim=c(-2,25))
+dev.off()
+
+
+
+pdf('spRoleHost.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+with(filter(czDF, host==FALSE), plot(participation, withinZ, 
+  pch=16, col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.25)[as.numeric(as.factor(role))], 
+  las=1, 
+  xlab=expression(paste('Among module connectivity (',italic(c),')')),
+  ylab=expression(paste('Within module degree (', italic(z),')')),
+  xlim=c(0,1), ylim=c(-2,25))
+)
+dev.off()
+
+
+
+pdf('spRoleHelminth.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+with(filter(czDF, host==TRUE), plot(participation, withinZ, 
+  pch=16, col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.25)[as.numeric(as.factor(role))], 
+  las=1, 
+  xlab=expression(paste('Among module connectivity (',italic(c),')')),
+  ylab=expression(paste('Within module degree (', italic(z),')')),
+  xlim=c(0,1), ylim=c(-2,25))
+)
+dev.off()
+
+
+pdf('spRoleMN.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+with(czDF2,
+  plot(mnPart, mnWithinZ, 
+    pch=16,
+    col=adjustcolor(c('purple', 'black'), 0.25)[1+host],
+    las=1, 
+    xlab=expression(paste('Among module connectivity (',italic(c),')')),
+    ylab=expression(paste('Within module degree (', italic(z),')')),
+    xlim=c(0,1), ylim=c(-1,12))
+)
+legend('topright', bty='n', c('Host', 'Helminth'), pch=16, 
+  col=adjustcolor(c('purple', 'black'), 0.25))
+dev.off()
+
+
+```
+
+
+
+
+
+
+```{r}
+
+
+pdf('spRoleGlobalHost.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+with(filter(globalCZ, host==FALSE), plot(participation, withinZ, 
+  pch=16, col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.25)[as.numeric(as.factor(role))], 
+  las=1, 
+  xlab=expression(paste('Among module connectivity (',italic(c),')')),
+  ylab=expression(paste('Within module degree (', italic(z),')')),
+  xlim=c(0,1), ylim=c(-2,25))
+)
+dev.off()
+
+
+pdf('spRoleGlobalParasite.pdf', height=5,width=5)
+par(mar=c(4,4,0.5,0.5))
+with(filter(globalCZ, host==TRUE), plot(participation, withinZ, 
+  pch=16, col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.25)[as.numeric(as.factor(role))], 
+  las=1, 
+  xlab=expression(paste('Among module connectivity (',italic(c),')')),
+  ylab=expression(paste('Within module degree (', italic(z),')')),
+  xlim=c(0,1), ylim=c(-2,25))
+)
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## cz area analysis
+
+
+```{r}
+
+#' get area of cz space
+#' 
+#' @param x x-axis coordinates
+#' @param y y-axis coordinates
+#' @param convexHull (boolean; default=FALSE) use the convex hull for polygon creation?
+#' 
+#' @return spatial polygon object
+
+getArea <- function(x,y, convexHull=TRUE){
+  rem <- which(is.na(x) | is.na(y))
+  if(any(rem)){
+    x <- x[-rem]
+    y <- y[-rem]
+  }
+  if(convexHull){
+    tmp <- chull(x,y)
+    x <- x[tmp]
+    y <- y[tmp]
+  }
+  Polygon(cbind(c(x, x[1]), c(y, y[1])))#@area
+}
+
+```
+
+
+
+
+```{r}
+
+czDFa <- czDF
+
+czDFarea <- czDFa %>% 
+  group_by(node) %>%
+  summarise(
+    area=getArea(withinZ, participation, convexHull=FALSE),
+    areaCH=getArea(withinZ, participation, convexHull=TRUE),
+    obs = length(role)
+  )
+
+```
+
+
+
+
+
+
+```{r}
+
+#' Calculate the expected cz area under a null model
+#' 
+#' @param x the cz data.frame object
+#' @param host (boolean) should we filter the hosts (TRUE) or parasites (FALSE)
+#' @param obs
+#' @param times number of times to randomly draw values
+#' @param convexHull (boolean) use convex hull for polygon area estimation?
+#' 
+#' @return vector of null model results
+
+getNullArea <- function(x, host=FALSE, obs=nrow(x), times=1000, convexHull=TRUE){
+  x <- filter(x, host==host)
+  narea <- sapply(1:times,
+    function(lll){
+      tmp <- x[sample(1:nrow(x), obs, replace=FALSE), ]
+      getArea(tmp$withinZ, tmp$participation, convexHull=convexHull)   
+    })
+  emp <- getArea(x$withinZ, x$participation, convexHull=convexHull)
+  z <-  (emp - mean(na.omit(narea))) / sd(narea,na.rm=TRUE)
+  p <- unlist(2 * pnorm(-abs(z)))
+  return(c(obs=obs, 
+    nullMean=mean(narea, na.rm=TRUE), 
+    emp=emp, z=z, p=p))
+}
+
+
+```
+
+
+
+
+
+
+
+Cluster version
+
+```{r}
+
+cl <- makeCluster(35, type='MPI')
+
+clusterExport(cl, list=list())
+
+czDFnull <- clusterApplyLB(cl, spn, function(x){
+  require(plyr); require(dplyr)
+  tmp <- filter(czDFa, node==x)
+  ret <- getNullArea(tmp, host=tmp$host[1], obs=nrow(tmp))
+  return(ret)
+})
+
+save.image('nullHelmCent2.RData')
+stopCluster(cl)
+
+```
+
+
+
+
+
+Local version (still can be parallel if you want)
+
+```{r}
+
+spn <- unique(czDFa$node)
+
+czDFnull <- list()
+czHost <- c()
+for(i in 1:length(spn)){
+  tmp <- filter(czDFa, node==spn[i])
+  czDFnull[[i]] <- getNullArea(tmp, host=tmp$host[1], obs=nrow(tmp))
+  czHost[i] <- tmp$host[1]
+  print(i)
+}
+
+czDFnull <- as.data.frame(do.call(rbind, czDFnull))
+
+```
+
+
+
+
+
+Nice histogram of $z$ scores with pointer to each side (z < 0 means role tends to be more conserved, z > 0 means a random draw of the same number of occurrences tends to be more conserved). 
+
+
+```{r}
+
+ncuts <- seq(-3.3,3.3, length.out=50)
+
+a0 <- hist(filter(czDFnull2, p <= 0.05 & z > 0)$z, breaks=ncuts)
+a1 <- hist(filter(czDFnull2, p > 0.05)$z, breaks=a0$breaks)
+a2 <- hist(filter(czDFnull2, p <= 0.05 & z < 0)$z, breaks=a0$breaks)
+
+
+pdf('areaRoles.pdf', height=3.5,width=6)
+  par(mar=c(4,4,0.5,0.5))
+  barplot(rbind(a0$counts, a1$counts), #a2$counts), 
+    col=adjustcolor(c('firebrick', 'grey'),0.5), 
+    border=c('firebrick', grey(0.1,0.9)), 
+    space=0, las=1, ylim=c(0,250), ylab='Frequency',
+    xlab='Deviation from null (z-score)')
+  axis(1, at=c(1,10,20,25,30,40,50), round(a0$mids[c(1,10,20,25,30,40,49)],0))
+  lines(c(11,11), y=c(0,240), lwd=3, lty=2)
+  lines(c(39,39), y=c(0,240), lwd=3, lty=2)
+  text(4, 200, 'Species roles \n conserved')
+  text(45, 200, 'Species roles \n anti-conserved')
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Concept figure
+
+
+```{r}
+
+con <- matrix(0, ncol=10, nrow=10)
+con[1,] <- c(1,1,1,1,1,1,1,1,1,1)
+con[2,] <- c(1,1,1,1,1,1,0,0,0,0)
+con[3,] <- c(1,1,1,1,1,1,0,0,0,0)
+con[4,] <- c(1,1,1,1,1,0,0,0,0,0)
+con[5,] <- c(1,1,1,1,0,0,0,0,0,0)
+con[6,] <- c(1,1,1,1,0,0,1,0,0,0)
+con[7,] <- c(1,1,1,1,0,0,0,0,1,0)
+con[8,] <- c(1,1,1,0,0,0,0,0,0,0)
+con[9,] <- c(1,1,0,0,0,0,0,0,0,0)
+con[10,]<- c(1,0,0,0,0,0,0,0,0,0)
+
+
+dumb <- TRUE
+while(dumb){
+  con <- matrix(rbinom(10*10,1, 0.25), ncol=10)
+  conceptG <- graph_from_incidence_matrix(con)
+  V(conceptG)$name <- LETTERS[1:length(V(conceptG))]
+  czConcept <- getCZ(conceptG)
+  roleConcept <- classifyRoles(czConcept)
+
+  plot(conceptG, layout=layout_as_bipartite, 
+    vertex.color=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.5)[as.numeric(as.factor(roleConcept))], 
+  vertex.label=NA, edge.color='black')
+
+  if(length(unique(na.omit(roleConcept)))==4){
+    dumb <- FALSE
+  }
+}
+
+
+
+
+pdf('concept.pdf', height=5, width=9)
+layout(matrix(1:2, ncol=2), width=c(1,1))
+plot(conceptG, layout=layout_as_bipartite, 
+  vertex.color=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.5)[as.numeric(as.factor(roleConcept))], 
+  vertex.label=NA, edge.color='black')
+
+plot(0:1,c(-2,10), ylab='Within module degree (z)', xlab='Among module connectivity (c)', col='white')
+
+segments(x0=0.62, y0=-1, y1=10) 
+segments(x0=0, x1=1, y0=2.5)
+
+text(0.25, 0, 'Peripheral')
+text(0.25,6, 'Module hubs', col='dodgerblue')
+text(0.80,6, 'Network hubs', col='firebrick')
+text(0.80, 0, 'Connectors', col='forestgreen')
+
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+## map of distribution of pies
+
+
+```{r}
+
+crds <- na.omit(left_join(czDF, locInfo[,c(1,3,4)], by=c('.id'='Location')))
+
+crds2 <- crds %>%
+  group_by(.id) %>%
+  summarise( 
+    connector=sum(role=='connectors', na.rm=TRUE),
+    nHubs=sum(role=='nHubs', na.rm=TRUE),
+    mHubs=sum(role=='mHubs', na.rm=TRUE),
+    peripheral=sum(role=='peripheral', na.rm=TRUE),
+    Longitude=Longitude[1],
+    Latitude=Latitude[1]
+  )
+
+crds3 <- crds2
+crds3[,2:5] <- crds3[,2:5] / rowSums(crds3[,2:5])
+crds4 <- as.data.frame(crds3)
+
+
+
+pdf('map0.pdf')
+maps::map()
+for(i in 1:nrow(crds3)){
+  plotrix::floating.pie(xpos=crds4[i,'Longitude'], 
+    ypos=crds4[i,'Latitude'], 
+    x=unlist(crds4[i, 2:5]), 
+    radius=3, edges=1000,
+    col=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.5))
+}
+dev.off()
+
+
+
+
+pdf('map.pdf')
+mapPies(dF = crds4,
+  nameX = "Longitude",
+  nameY = "Latitude",
+  borderCol=grey(0.1,0.9),
+  nameZs=colnames(crds4)[2:5],
+  symbolSize=0.5,
+  zColours=adjustcolor(c('forestgreen', 'dodgerblue','firebrick','black'), 0.5)
+)      
+dev.off()
+
+
+```
+
+
+
+
+
+barplot setup
+
+```{r}
+
+czDF2$globalRole <- globalCZ$role
+czDF4 <- czDF2 
+czDF4[,c(4:7)] <- czDF4[,c(4:7)] / rowSums(czDF4[,c(4:7)]) 
+czDF4 <- czDF4[order(czDF4$globalRole), ]
+czDF4 <- filter(czDF4, numLocations > 10)
+czDF4 <- filter(czDF4, !is.na(connector))
+
+
+pdf('barplotRole.pdf', width=14, height=4)
+par(mar=c(4,4,0.5,0.5))
+barplot(t(czDF4[,c(4:7)]), space=0, 
+  col=c('forestgreen', 'dodgerblue','firebrick',grey(0.1,0.9)), 
+  border=NA, las=1,
+  ylab='Frequency', xlab='Species')
+ftab <- cumsum(table(czDF4$globalRole))
+rect(xleft=0, xright=ftab[1], ybottom=-0.15, ytop=-0.05, 
+  col=adjustcolor('forestgreen', 0.5), 
+  border=adjustcolor('forestgreen', 0.5), xpd=TRUE)
+rect(xleft=1+ftab[1], xright=ftab[2], ybottom=-0.15, ytop=-0.05, 
+  col=adjustcolor('dodgerblue', 0.5), 
+  border=adjustcolor('dodgerblue', 0.5), xpd=TRUE)
+rect(xleft=1+ftab[2], xright=ftab[3], ybottom=-0.15, ytop=-0.05, 
+  col=adjustcolor('firebrick',0.5), 
+  border=adjustcolor('firebrick',0.5), xpd=TRUE)
+rect(xleft=1+ftab[3], xright=ftab[4], ybottom=-0.15, ytop=-0.05, 
+  col=adjustcolor(grey(0.1,0.9), 0.5),
+  border=adjustcolor(grey(0.1,0.9), 0.5), xpd=TRUE)
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Global 
+
+```{r}
+
+gz2 <- czDF2[,c(1:7)]
+gz2[,c(4:7)] <- gz2[,c(4:7)] / rowSums(gz2[,c(4:7)])
+gz2[,c(4:7)] <- gz2[,c(4:7)] * 100
+
+globalCZ2 <- left_join(globalCZ, gz2, by='node')
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+Fraction of times the local network got the global role right for each species
+
+
+```{r}
+
+colnames(globalCZ2)[11] <- 'connector'
+
+globalCZ2$match <- as.numeric(apply(globalCZ2, 1, function(x){
+    x[match(x['role'], names(x))]
+  }
+))
+
+globalCZ2 <- filter(globalCZ2, !is.na(match))
+
+pdf('globalLocalHist.pdf', height=6, width=7)
+par(mfrow=c(2,2), mar=c(4,3,1,0.25))
+a=hist(filter(globalCZ2, role=='connector')$match,
+  main='Connectors', xlab='' ,
+  col=adjustcolor('forestgreen',0.35),
+  border='forestgreen')
+
+hist(filter(globalCZ2, role=='mHubs')$match,
+  main='Module hubs', xlab='', breaks=a$breaks,
+  col=adjustcolor('dodgerblue',0.35),
+  border='dodgerblue')
+
+hist(filter(globalCZ2, role=='nHubs')$match,
+  main='Network hubs', xlab='Percent match', 
+  xlim=c(0,100), breaks=a$breaks,
+  col=adjustcolor('firebrick',0.35),
+  border='firebrick')
+
+hist(filter(globalCZ2, role=='peripheral')$match,
+  main='Peripherals', xlab='Percent match', breaks=a$breaks,
+  col=adjustcolor('black',0.35),
+  border='black')
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+# Taxonomic signal stuff
+
+Taxize to get at host species taxonomy. Bit of a rabbit hole. 
+
+
+```{r}
+
+czDFH <- filter(czDF2, host==FALSE)
+
+levz <- c('kingdom', 'class', 'order', 'family', 'genus', 'species')
+
+czClass <- list()
+
+for(i in 1:length(czDFH$node)){ 
+  ret <- try(taxize::classification(czDFH$node[i], db = 'ncbi',
+     messages=FALSE))
+  if(inherits(ret, 'try-error') | is.na(ret[[1]])){
+    czClass[[i]] <- rep(NA, 6)
+  }else{
+    ret <- ret[[1]]
+    czClass[[i]] <- ret[match(levz, ret[,2]), 1]
+  }
+  print(i)
+}
+
+czClassDF <- do.call(rbind, czClass))
+colnames(czClassDF) <- levz
+czClassDF <- as.data.frame(czClassDF)
+
+```
+
+
+
+
+
+
+```{r}
+pieColz <- c('forestgreen', 'dodgerblue', 'firebrick', grey(0.1,0.9))
+
+czDFP <- filter(czDF2, host==TRUE)
+czDFP2 <- left_join(czDFP, groupDF, by=c('node'='species'))
+czDFP3 <- as.data.frame(czDFP2 %>%
+  group_by(group) %>%
+  summarise(
+    connector=sum(connector, na.rm=TRUE), 
+    mHubs = sum(mHubs, na.rm=TRUE), 
+    nHubs = sum(nHubs, na.rm=TRUE), 
+    peripheral = sum(peripheral, na.rm=TRUE), 
+    sp = length(unique(node))
+  )
+)
+czDFP3[,c(2:5)] <- czDFP3[,c(2:5)] / rowSums(czDFP3[,c(2:5)])
+ 
+frmp <- ~group
+trp <- as.phylo(frmp, data=czDFP3)
+pieCex <- (czDFP3$sp / max(czDFP3$sp)) 
+
+pdf('parasiteTree.pdf', height=15, width=15)
+plot(trp, type='radial', 
+  label.offset=0.375,
+  show.tip.label=TRUE, root.edge=TRUE)
+tiplabels(tip=1:nrow(czDFP3), 
+  pie = as.matrix(czDFP3[,c('connector', 'mHubs', 'nHubs', 'peripheral')]),
+  piecol=adjustcolor(pieColz, 0.5), 
+  cex = 3 * (1+pieCex))
+#  cex = -0.5+(1+log(1+pieCex))**2)
+
+legend('bottomright', c('Connector', 'Module hub', 'Network hub', 'Peripheral'),
+  pch=16, col=pieColz, bty='n', cex=2)
+dev.off()
+
+
+
+
+
+```
+
+
+
+
+## taxonomic signal in host species roles
+
+```{r}
+
+czClassDF2 <- filter(czClassDF, !is.na(species) & !is.na(order))
+czClassDF2 <- czClassDF[which(apply(czClassDF,1,function(x){any(is.na(x))}) == FALSE), ]
+
+czClassDF3 <- left_join(czClassDF2, czDF2, by=c('species'='node'))
+czClassDF3[,9:12] <- czClassDF3[,9:12] / rowSums(czClassDF3[,9:12])
+czClassDF4 <- czClassDF3[which(rowSums(czClassDF3[,9:12]) == 1), ]
+czClassDF4$species <- as.factor(czClassDF4$species)
+
+frm <- ~kingdom/class/order/family/genus/species
+tr <- as.phylo(frm, data = czClassDF4)
+
+pdf('speciesTree.pdf', height=12, width=12)
+plot(tr, type='radial', 
+  label.offset=0.1,
+  show.tip.label=TRUE, root.edge=TRUE)
+tiplabels(tip=1:nrow(czClassDF4), 
+  pie = as.matrix(czClassDF4[,9:12]), cex = 0.5)
+dev.off()
+
+```
+
+
+
+
+
+
+
+```{r}
+
+
+
+plotClassPhylo <- function(czClassDF, family=TRUE, colz=pieColz, name='tree'){
+  czClassDF2 <- filter(czClassDF, !is.na(species) & !is.na(order))
+  czClassDF2 <- czClassDF[which(apply(czClassDF,1,function(x){any(is.na(x))}) == FALSE), ]
+  czClassDF3 <- left_join(czClassDF2, czDF2, by=c('species'='node'))
+  if(family){
+    czDFfamily <- czClassDF3 %>% 
+      group_by(family) %>%
+      summarise(connector=sum(connector), 
+        mHubs=sum(mHubs), 
+        nHubs=sum(nHubs),
+        peripheral=sum(peripheral), 
+        sp = length(unique(species)))
+    pieCex <- (czDFfamily$sp / max(czDFfamily$sp)) 
+    czDFfamily <- filter(czDFfamily, !is.na(connector))
+    czDFfamily[,2:5] <- czDFfamily[,2:5] / rowSums(czDFfamily[,2:5])
+
+    czClassDF4 <- czDFfamily[which(rowSums(czDFfamily[,2:5]) == 1), ]
+    czClassDF4 <- left_join(czClassDF4, unique(czClassDF3[,c(1:4)]), by='family')    
+    frm <- ~class/order/family
+  }else{
+    pieCex <- rep(1, nrow(czClassDF3))
+    czClassDF3[,9:12] <- czClassDF3[,9:12] / rowSums(czClassDF3[,9:12])
+    czClassDF4 <- czClassDF3[which(rowSums(czClassDF3[,9:12]) == 1), ]
+    czClassDF4$species <- as.factor(czClassDF4$species)
+  }
+  tr <- as.phylo(frm, data = czClassDF4)
+  pdf(paste(name,'.pdf',sep=''), height=15, width=15)
+  plot(tr, type='radial', 
+    label.offset=0.1,
+    show.tip.label=TRUE, root.edge=TRUE)
+  tiplabels(tip=1:nrow(czClassDF4), 
+    pie = as.matrix(czClassDF4[,c('connector', 'mHubs', 'nHubs', 'peripheral')]),
+    piecol=adjustcolor(colz, 0.5), 
+    cex = -0.5+(1+log(1+pieCex))**2)
+
+  legend('bottomright', c('Connector', 'Module hub', 'Network hub', 'Peripheral'),
+    pch=16, col=colz, bty='n', cex=2)
+  dev.off()
+}
+
+```
+
+
+
+
+```{r}
+
+plotClassPhylo(filter(czClassDF, class=='Mammalia'), family=TRUE, name='mamTreeF')
+plotClassPhylo(filter(czClassDF, class=='Actinopteri'), family=TRUE, name='fishTreeF')
+plotClassPhylo(filter(czClassDF, class=='Gastropoda'), family=TRUE, name='gastroTreeF')
+plotClassPhylo(filter(czClassDF, class=='Amphibia'), family=TRUE, name='amphibTreeF')
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+czClassDF2family <- unique(czClassDF2[,c(1:3)])
+czClassDF3f <- left_join(czClassDF2, czDF2, by=c('species'='node'))
+czDFfamily <- czClassDF3f %>% 
+  group_by(order) %>%
+  summarise(connector=sum(connector, na.rm=TRUE), 
+    mHubs=sum(mHubs, na.rm=TRUE), 
+    nHubs=sum(nHubs, na.rm=TRUE),
+    peripheral=sum(peripheral, na.rm=TRUE), 
+    sp=length(unique(species)))
+czDFfamily$sp <- czDFfamily$sp / max(czDFfamily$sp)
+
+czDFfamily <- filter(czDFfamily, !is.na(connector))
+czDFfamily[,2:5] <- czDFfamily[,2:5] / rowSums(czDFfamily[,2:5])
+czClassDF3family <- left_join(czClassDF2family, czDFfamily, by='order')    
+czClassDF3family <- filter(czClassDF3family, !is.na(connector))
+
+
+frm2 <- ~kingdom/class/order
+tr2 <- as.phylo(frm2, data = czClassDF3family)
+phylotraits <- phylo4d (tr2, 
+  czClassDF3family[,c('connector', 'mHubs', 'nHubs', 'peripheral')]) 
+moran.test <- abouheif.moran (phylotraits, method = "Abouheif") 
+
+```
+
+
+
+
+

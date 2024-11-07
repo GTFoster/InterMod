@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+options(java.parameters = "-Xmx20g") #Java Heap Space Limits for Maxent
 library(raster)
 library(tidyverse)
 library(terra)
@@ -38,15 +39,12 @@ crul::set_opts(http_version = 2) #For getting gbif queries to work: https://gith
 
 Let's explore the data from this paper: https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/1365-2656.13986. 308 networks of avian-plant interactions. Maybe good? 
 
-Turns out; the Bello dataset is included in this idk why I thought it wasn't :(
 ```{r}
 Moulatlet <- read.csv(file="../Data/datalong_v08_06_2023_CLEANED.csv")
 Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::filter(interaction %in% (c(0,1))) %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% dplyr::rename(., Latitude=lat, Longitude=lon, Frugivore_Species=Scientific, Plant_Species=plant_id) %>%
   unique()
 
 Moulatletval$interaction <- as.numeric(Moulatletval$interaction)
-
-
 
 counts <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>%
   group_by(., speciesPair) %>%
@@ -83,12 +81,69 @@ world <- ne_countries(scale = "medium", returnclass = "sf")
 usable$Latitude <- as.numeric(usable$Latitude)
 usable$Longitude <- as.numeric(usable$Longitude)
 
+
 #pdf(file="Figures/MoulatletMap_10occ.pdf", width=11, height=8.5)
+
+#pdf(file="Figures/spatialextent.pdf")
 ggplot(data = world) +
-    geom_sf()+theme_classic()+geom_point(data=usable, aes(x=Longitude, y=Latitude))
-#dev.off()
+    geom_sf()+theme_classic()+ usable %>% group_by(., speciesPair) %>% slice_sample(n=1) %>%
+  geom_point(data=., aes(x=Longitude, y=Latitude, col=prop), size=1.25)+scale_color_gradient(low = "firebrick", high="dodgerblue")
+dev.off()
+
+length(unique(usable$speciesPair))
+```
+
+From WOL
+```{r}
+
+amPol2 <- amPol %>% dplyr::select(., species1, species2, interaction, latitude, longitude) %>% unique()
+expand(amPol, species1, species2)
+amPol2$interact <- paste(amPol2$species1, amPol2$species2, sep="-")
+
+temp <- expand(amPol, species1, species2)
+temp$interact <- paste(temp$species1, temp$species2, sep="-")
+
+temp <- amPol2 %>% select(., species1, latitude, longitude) %>% unique() %>% group_by(species1) %>% summarise(nsites_a1=length(unique(latitude))) %>% left_join(temp, ., by="species1")
+
+temp <- amPol2 %>% select(., interact, latitude, longitude) %>% unique() %>% group_by(interact) %>% summarise(nsites_interact=length(unique(latitude))) %>% left_join(temp, ., by="interact")
+
+table(is.na(temp$nsites_interact))
+
+temp2 <- dplyr::filter(temp, nsites_interact>4)
+
+
+temp2 <-dplyr::filter(temp2, grepl("M_PL", species2)==F) #Remove non-IDed species.
+
+
 
 ```
+
+
+
+
+ Let's add predictors to our values here. 
+```{r}
+
+#Match colnames
+Moulatlet <- Moulatlet %>% dplyr::rename(., Frugivore_Species=Scientific, Plant_Species=plant_id, Latitude=lat, Longitude=lon)
+
+#
+inter <- Moulatlet %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-"))
+inter <- dplyr::filter(inter, speciesPair%in% unique(usable$speciesPair))
+inter$Latitude <- as.numeric(inter$Latitude)
+inter$Longitude <- as.numeric(inter$Longitude)
+
+#Why is there a many to 1 relationship here?
+usable <- inter %>% dplyr::select(Latitude, Longitude, nplants, nbirds) %>% unique() %>% left_join(usable, ., by=c("Latitude", "Longitude"))
+
+usable$nplants <- as.numeric(usable$nplants)
+usable$nbirds <- as.numeric(usable$nbirds)
+usable <- dplyr::filter(usable, is.na(nbirds)==F)
+usable$type <- "Frugivory"
+```
+
+
+
 
 Welp, let's make SDMS of these.
 ```{r}
@@ -121,24 +176,197 @@ gbifQuery <- function(name, doplot=FALSE){
 
 
 ```{r}
+x <- read.csv(file="data/GBIF/occs/crataegus_monogyna.csv")
+
+full_frugs <- list.files(path="data/occ_Dat/CentralRange_occs/") #List all files
+full_frugs <- full_frugs[full_frugs!="shortened"] #remove directory
+short_frugs <- list.files(path="data/occ_Dat/CentralRange_occs/shortened")
+
+full_poll <- list.files(path="data/occ_Dat/InterMod_occs/")
+full_poll <- full_poll[full_poll!="shortened"] #remove directory
+short_poll <- list.files(path="data/occ_Dat/InterMod_occs/shortened")
+
+output <- NULL
+for(i in 1:length(full_frugs)){
+  temp <- try(read.csv(file=paste("data/occ_Dat/CentralRange_occs/", full_frugs[i], sep="")))
+  if(class(temp)=="try-error"){
+    next
+  }
+  if(nrow(temp)==0){
+    next
+  }
+  temp$i <- i
+  temp$group <- "full_frug"
+  temp$file <- full_frugs[i]
+ output <- rbind(output, temp)
+ 
+ if(i %%10 ==0){
+   print(paste("done with", i, "fullfrug"))
+ }
+}
+
+for(i in 1:length(short_frugs)){
+  temp <- try(read.csv(file=paste("data/occ_Dat/CentralRange_occs/shortened/", short_frugs[i], sep="")))
+  if(class(temp)=="try-error"){
+    next
+  }
+    if(nrow(temp)==0){
+    next
+  }
+  temp$i <- i
+  temp$group <- "short_frug"
+  temp$file <- short_frugs[i]
+ output <- rbind(output, temp)
+  if(i %%10 ==0)
+   print(paste("done with", i, "short_frug"))
+}
+
+for(i in 1:length(full_poll)){
+  temp <- try(read.csv(file=paste("data/occ_Dat/InterMod_occs/", full_poll[i], sep="")))
+  if(class(temp)=="try-error"){
+    next
+  }
+    if(nrow(temp)==0){
+    next
+  }
+  
+  temp$i <- i
+  temp$group <- "full_poll"
+  temp$file <- full_poll[i]
+ output <- rbind(output, temp)
+   if(i %%10 ==0)
+   print(paste("done with", i, "full_poll"))
+}
+
+for(i in 1:length(short_poll)){
+  temp <- try(read.csv(file=paste("data/occ_Dat/InterMod_occs/shortened/", short_poll[i], sep="")))
+  if(class(temp)=="try-error"){
+    next
+  }
+  if(nrow(temp)==0){
+    next
+  }
+  temp$i <- i
+  temp$group <- "short_poll"
+  temp$file <- short_poll[i]
+ output <- rbind(output, temp)
+  output <- rbind(output, temp)
+   if(i %%10 ==0)
+   print(paste("done with", i, "short_poll"))
+}
+
+write.csv(output, file="data/composite_occs.csv", row.names = F)
+```
+
+```{r}
+output <- read.csv(file="data/composite_occs.csv")
+```
+
+
+```{r}
+queried <- c(short_poll, full_frugs, full_poll, short_frugs)# %>% gsub(".csv", "",.) %>% gsub("_"," ", . )
+#table(queried %in% tolower(splist))
+length(queried)
+length(unique(output$file))
+```
+
+```{r}
+toquery <- queried[(queried %in% present$Var2)==F]
+```
+
+
+```{r}
+comb <- data.frame(table(output$file, output$species)) %>% dplyr::filter(., Freq>0)
+
+head(comb)
+table(table(output$file, output$species))
+```
+
+
+Remove queries that didn't work at first. 
+```{r}
+output <- dplyr::filter(output, file %in% queried)
+```
+
+```{r}
+x <- data.frame(table(output$species, output$file))
+```
+
+
+```{r}
+z <- read.csv(file=paste("data/occ_Dat/CentralRange_occs/", x[1], sep=""))
+
 spnames <- unique(c(usable$Plant_Species, usable$Frugivore_Species))
 comp_occs <- NULL
 
 iters <- 35
+colnames(output)
+output$cells <- terra::cellFromXY(Clima, output[,5:4])
+table(is.na(output$cells))
+#empty <- dplyr::filter(output, is.na(cells)==TRUE) %>% dplyr::select(.,  species, decimalLatitude, decimalLongitude) %>% unique() #only 2-nice
 
-for(i in 1:iters){
-  filnam <- spnames[i] %>% tolower() %>% gsub(pattern=" ", replacement="_") %>% paste("data/GBIF/occs/", .,".csv", sep="")
+output <- dplyr::select(output, -decimalLatitude, -decimalLongitude, -scientificName) %>% unique()
+splist <- unique(output$species)
+table(tolower(splist) %in% queried)
+
+output <- cbind(output, xyFromCell(Clima, output$cells))
+```
+
+```{r}
+colnames(output)
+output2 <- dplyr::select(output, -genus, -scientificName, -i) %>% unique()
+output <- output2
+```
+
+
+START HERE
+```{r, eval=FALSE}
+psuedos <- NULL
+splist <- unique(output$file)
+for(i in 1:length(splist)){
+  temp <- dplyr::filter(output, file==splist[i])
+  if(nrow(temp)>10000){ #If too many points, sample down to 10k
+    temp <- temp[sample(1:nrow(temp), 10000, replace=F),]
+  }
+
+  #creating a 200km2 buffer to select the pseudo-absence points
+    OccSf <- sf::st_as_sf(x=temp[,8:9], coords = c("x",'y'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84
+    
+    OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects
+    OccBuffer <-sf::st_union(OccBuffer) #Merge buffer objects into one
   
-    temp <- read.csv(file=filnam)
-    if(nrow(temp)==0){
-      next
-    }
+    OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects
+    OccBuffer <-sf::st_union(OccBuffer) #Merge buffer objects into one
+    #plot(OccBuffer)
+
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBuffer2 <-as(OccBuffer, 'Spatial')
+    #terra::plot(OccBuffer2)
+    OccBuffer2 <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBuffer2, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    #plot(OccBufferRas)
+    
+    ##Selecting the pseudo absences. Since I'm doing 1:1 Presence:Psuedoabsence, I'm saving the cell number in the df as a seperate column. 
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo,cell=T)
+    AllPseudo <-AllPseudo[-(which(AllPseudo$cell %in% temp$cells)),]
+    
+    temp$psuedocell <- sample(AllPseudo$cell, size=nrow(temp), replace=F)
+    psuedos <- rbind(psuedos, temp)
+}
+
+
+
+output$file
+for(i in 1:length(splist)){
     occ <- temp %>% dplyr::select(., decimalLongitude, decimalLatitude, species) %>% dplyr::filter(., is.na(decimalLongitude)==FALSE) %>% unique()
 
     occ['cells'] <-terra::cellFromXY(object= Clima[[1]], xy = occ[,1:2]) #Grab the occurance cells & remove redundant records
     sf_use_s2(FALSE) #Don't assume a spherical geometry-therefore dist for buffer will be in units of degree
   
-    #creating a 200km2 buffer to select the psudo-absence points
+    #creating a 200km2 buffer to select the pseudo-absence points
     OccSf <-sf::st_as_sf(x=occ[,1:2], coords = c("decimalLongitude",'decimalLatitude'), 
                         crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84
   
@@ -177,7 +405,7 @@ Getting data
 ```{r}
 #Getting climate data
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
-terra::plot(Clima[[1]])
+#terra::plot(Clima[[1]])
 
 #Here's loading all of these in and merging them
 #tile53 <- raster::stack("worldclim/wc2.1_tiles/tile_53_wc2.1_30s_bio.tif")
@@ -199,11 +427,12 @@ Climastack <- raster::stack(Clima)
 
 Performing PCA - Don't Run-This crashes computers!!!
 ```{r}
-comp_occs <- read.csv(file="data/comp_occurances.csv")
-comp_occs$PA <- 1 #Add a 1 to the presence absence file-my b, changed my mind how I wanted things organized
+datas <- read.csv(file="data/psuedos.csv")[,-1]
 
-abs <- dplyr::select(comp_occs, -cells) %>% dplyr::mutate(., decimalLongitude=NA, decimalLatitude=NA, PA=0) %>% dplyr::rename(., cells=psuedocell)
-pres <- dplyr::select(comp_occs, -psuedocell)
+datas$PA <- 1 #Add a 1 to the presence absence file-my b, changed my mind how I wanted things organized
+
+abs <- dplyr::select(datas, -cells) %>% dplyr::mutate(., decimalLongitude=NA, decimalLatitude=NA, PA=0) %>% dplyr::rename(., cells=psudeocells)
+pres <- dplyr::select(datas, -psudeocells) #Create a new empty cell for psuedooccurances
 
 comp_long <- rbind(abs, pres)
 rm(abs, pres)
@@ -240,8 +469,8 @@ spob <- EixXY %>% dplyr::select(., -decimalLongitude, -decimalLatitude, -species
 #EixXY<-cbind(ext[,(1:2)],Eix) #re add back in the coordinates from earlier
 sp::gridded(spob)<- ~x+y #Create large spatial pixels df (prep to reconvert to raster)
 PCAPr <-raster::stack(spob) #create a rasterstack for each 
-raster.comb<-PCAPr[[1:(sum(VarEx<=0.95)+1)]] #only include the axis necessary to explain 95% of variation
-plot(raster.comb)
+raster.comb<-PCAPr[[6:(sum(VarEx<=0.95)+6)]] #only include the axis necessary to explain 95% of variation
+class(raster.comb)
 ```
 
 
@@ -253,39 +482,50 @@ Given our records, here are our Maxent Models
 
 ```{r, eval=TRUE}
 
-for(i in 1:length(spnames)){
-    Occ <- dplyr::filter(comp_occs, species==spnames[i]) #Filter to target species
-    Pspots <- terra::xyFromCell(Clima, Occ$cells) %>% as.data.frame() %>% dplyr::rename(., "Long"=x, "Lat"=y) #Extract presence xy
-    Aspots <- terra::xyFromCell(Clima, Occ$psuedocell) %>% as.data.frame() #extract absence xy
+for(i in 295:length(splist)){
+    Occ <- comp_long[comp_long$file==splist[i],] #Filter to target species
+    if(nrow(Occ)<20){
+      next #Skip if there are no records
+    }
     
-    Occurrences <- cbind(Pspots, Aspots)
+    xy <- terra::xyFromCell(Clima, Occ$cells) %>% as.data.frame() %>% dplyr::rename(., "Long"=x, "Lat"=y) 
     
-    id.training<-sample(1:nrow(Occurrences),round(0.75*nrow(Occurrences),0)) 
-    
-    #plot(raster.comb[[1]])
-    #points(x=Occurrences$Long, y=Occurrences$Lat)
+    Occurrences <- cbind(Occ, xy)#, Aspots)
+    id.training <-sample(1:(nrow(Occurrences)/2),round(0.75*nrow(Occurrences)/2,0)) 
+    pres <- dplyr::filter(Occurrences, PA==1)
+    abs <- dplyr::filter(Occurrences, PA==0)
   
-    training <-dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")]) 
-    testing<-prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
+    training <-dismo::prepareData(x=raster.comb, p=pres[id.training,c("Long", "Lat")], b=abs[id.training,c("Long", "Lat")]) 
+    testing<-dismo::prepareData(x=raster.comb, p=pres[-id.training,c("Long", "Lat")], b=abs[-id.training,c("Long", "Lat")])    
     training<-na.omit(training)
     testing<-na.omit(testing)
       
     Occurrences2<-Occurrences
-    colnames(Occurrences2)<-rep(c('Long','Lat'),2)
-    testingPresPA<-rbind.data.frame(Occurrences2[-id.training,1:2],Occurrences2[-id.training,3:4])
+    #colnames(Occurrences2)<-rep(c('Long','Lat'),2)
+    #testingPresPA<-rbind.data.frame(Occurrences2[-id.training,1:2],Occurrences2[-id.training,3:4])
     
       ##Maxent
     Sys.setenv(NOAWT=TRUE)
-    Maxent.Model<-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
+    Maxent.Model <- dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
     
     #Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') 
     
-    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+    Maxent.eval<-dismo::evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
 
-    save(Maxent.Model, Maxent.eval, file=paste("MaxentModels/Maxent_test_", gsub(pattern=" ", spnames[i], replacement="_"), ".Rda", sep=""))
+    save(Maxent.Model, Maxent.eval, file=paste("MaxentModels2/Maxent_test_", gsub(pattern=" ", gsub(".csv", "", splist[i]), replacement="_"), ".Rda", sep=""))
     rm(Maxent.Model, Maxent.eval)
+    print(i)
 }    
 
+Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') #Predict suitability according to trained model
+plot(Maxent.0)
+
+```
+
+Plant-Pollinator Interactions
+```{r}
+Maxent.eval
+Maxent.Model$prediction
 ```
 
 

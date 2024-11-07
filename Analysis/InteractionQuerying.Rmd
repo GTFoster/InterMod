@@ -1,0 +1,54 @@
+---
+title: "Untitled"
+author: "Grant Foster"
+date: "2024-08-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load(file="data/TestPoints.Rda")
+```
+
+```{r}
+interlist <- unique(testpoints$speciesPair)
+output <- NULL
+
+for(i in 1:length(interlist)){
+  inter <- testpoints[testpoints$speciesPair==interlist[i],]
+  #Do stuff for animal species
+  anload <- try(load(file=gsub(" ","_",paste("MaxentModels2/Maxent_test_", tolower(inter$Animal_Species[1]), ".Rda", sep=""))))
+    if(class(anload)=="try-error"){
+      print(gsub(" ","_",paste("MaxentModels2/Maxent_test_", tolower(inter$Animal_Species[1]), ".Rda not found", sep="")))
+      next
+    }
+  
+      realtest <-dismo::prepareData(x=raster.comb, p=inter[inter$interaction==1,c("Longitude", "Latitude")], b=inter[inter$interaction==0,c("Longitude", "Latitude")])  #Prepare real interaction data for prediction
+      
+      inter$aSuit  <- as.numeric((is.na(realtest$PC1)))
+      inter$aSuit[inter$aSuit==1] <- NA
+      inter$aSuit[is.na(inter$aSuit)==F] <- dismo::predict(object = Maxent.Model, x = realtest, args='outputformat=cloglog') #Predict using animal suitability and add it to the dataframe
+      
+  
+  #Do stuff for animal species
+  pload <- try(load(file=gsub(" ","_",paste("MaxentModels2/Maxent_test_", tolower(inter$Plant_Species[1]), ".Rda", sep=""))))
+    if(class(pload)=="try-error"){
+      print(gsub(" ","_",paste("MaxentModels2/Maxent_test_", tolower(inter$Plant_Species[1]), ".Rda not found", sep="")))
+      next
+    }
+  
+      realtest <-dismo::prepareData(x=raster.comb, p=inter[inter$interaction==1,c("Longitude", "Latitude")], b=inter[inter$interaction==0,c("Longitude", "Latitude")])  #Prepare real interaction data for prediction
+      inter$pSuit  <- as.numeric((is.na(realtest$PC1)))
+      inter$pSuit[inter$pSuit==1] <- NA
+      inter$pSuit[is.na(inter$pSuit)==F] <- dismo::predict(object = Maxent.Model, x = realtest, args='outputformat=cloglog') #Predict using animal suitability and add it to the dataframe    
+      output <- rbind(output, inter)
+      if(i%%10){
+        print(i)
+      }
+}
+write.csv(output, file="sdmresult.csv")
+```
+

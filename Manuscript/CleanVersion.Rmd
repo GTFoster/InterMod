@@ -1,0 +1,33 @@
+---
+title: "Cleaning"
+author: "Grant Foster"
+date: "2024-10-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Querying interaction data
+```{r}
+sp <- unlist(read.csv(file="data/speciestoQuery.csv")) #Read in our species names to query
+
+dat <- read.csv(file="data/FrugivoreMetaweb.csv") #load in entire interaction set (subset of Moulatlet)
+
+frugMweb <- dat %>% dplyr::select(., -Latitude, -Longitude) %>% unique() #Remove redundancies across location - CHANGE THIS IS YOU CARE ABOUT EDGE WEIGHTS
+
+plants <- unique(frugMweb$Plant_Species)
+```
+
+
+# Quantifying interaction specialism
+
+
+
+# Querying GBIF occurence points
+
+# Creating SDMS
+
+# Analyzing SDM outputs
+
