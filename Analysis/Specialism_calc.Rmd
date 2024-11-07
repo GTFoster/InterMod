@@ -1,0 +1,282 @@
+---
+title: "Specialism_Calc"
+output: html_document
+date: "2024-07-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(picante)
+library(BIEN)
+```
+
+
+```{r}
+sp <- unlist(read.csv(file="data/speciestoQuery.csv")) #Read in our species names to query
+
+dat <- read.csv(file="data/FrugivoreMetaweb.csv") #load in entire interaction set (subset of Moulatlet)
+
+frugMweb <- dat %>% dplyr::select(., -Latitude, -Longitude) %>% unique() #Remove redundancies across location - CHANGE THIS IS YOU CARE ABOUT EDGE WEIGHTS
+
+plants <- unique(frugMweb$Plant_Species)
+```
+
+Grabbing plant functional traits from BIEN. Cool idea, but right now tends to take too long. 
+```{r, eval=FALSE}
+c <- BIEN::BIEN_trait_mean(plants[1:2], trait = "diameter at breast height (1.3 m)")
+ptraits1 <- BIEN::BIEN_trait_species(species=plants[1:999])
+BIEN
+contptraits <- ptraits %>% dplyr::filter(.,trait_name %in% c("diameter at breast height (1.3 m)", "leaf area per leaf dry mass", "leaf dry mass per leaf fresh mass", "leaf nitrogen content per leaf dry mass", "seed mass", "whole plant height", "leaf life span", "leaf area"))
+contptraits$trait_value <- as.numeric(contptraits$trait_value)
+contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
+
+
+contptraits$trait_value <- as.numeric(contptraits$trait_value)
+contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
+
+```
+
+START HERE: Add in congenerics as rooted polytomies (like in Fruglink)
+
+```{r}
+plant_list <- c(unique(frugMweb$Plant_Species), sp) %>% unique()
+plant_list <- gsub(" ","_", plant_list)
+
+BIEN_tree <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 1, seed=1, replicates = 1)
+
+BIEN_matches <- plant_list[plant_list %in% BIEN_tree$tip.label==TRUE]
+
+BIEN_subtree <- ape::keep.tip(BIEN_tree, tip=BIEN_matches)
+plot(BIEN_subtree)
+```
+
+
+```{r}
+dmatrix <- stats::cophenetic(BIEN_subtree) 
+dmatrix <- dmatrix/max(dmatrix) 
+
+#String manipulation so tree tip names match
+dat$plant_Tips <- gsub(pattern=" ", replace="_", x=dat$Plant_Species) 
+#Only include plant species for which phylogenetic info is available
+dat_phylo <- dplyr::filter(dat, plant_Tips %in% BIEN_subtree$tip.label) 
+
+comm <- as.data.frame.matrix(table(dat_phylo$Frugivore_Species, dat_phylo$plant_Tips))#Binary, unweighted intraction matrix.
+#The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
+frugivore_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+```
+
+
+```{r}
+amPol <- dplyr::rename(amPol, Plant_Species=species1, Pollinator_Species=species2) %>% dplyr::select(., Plant_Species, Pollinator_Species)
+plant_list_poll <- c(unique(amPol$Plant_Species), sp) %>% unique()
+plant_list_poll <- gsub(" ","_", plant_list_poll)
+BIEN_matches_poll <- plant_list_poll[plant_list_poll %in% BIEN_tree$tip.label==TRUE]
+BIEN_subtree_poll <- ape::keep.tip(BIEN_tree, tip=BIEN_matches)
+
+
+dmatrix_p <- stats::cophenetic(BIEN_subtree_poll) 
+dmatrix_p <- dmatrix_p/max(dmatrix_p) 
+
+#String manipulation so tree tip names match
+amPol$plant_Tips <- gsub(pattern=" ", replace="_", x=amPol$Plant_Species) 
+#Only include plant species for which phylogenetic info is available
+dat_phylo_p <- dplyr::filter(amPol, plant_Tips %in% BIEN_subtree$tip.label) 
+
+comm <- as.data.frame.matrix(table(dat_phylo_p$Pollinator_Species, dat_phylo_p$plant_Tips))#Binary, unweighted intraction matrix.
+#The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
+pollintor_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+```
+
+
+
+```{r}
+bird_list <- c(unique(frugMweb$Frugivore_Species), sp) %>% unique()
+bird_list <- gsub(" ","_", bird_list)
+
+Bird_tree <- ape::read.nexus(file="../Data/VertLife_FrugBird/output.nex")[[1]]
+
+bird_matches <- bird_list[bird_list %in% Bird_tree$tip.label==TRUE]
+
+bird_subtree <- ape::keep.tip(Bird_tree, tip=bird_matches)
+#plot(bird_subtree)
+
+dmatrix <- stats::cophenetic(bird_subtree) 
+dmatrix <- dmatrix/max(dmatrix) 
+
+#String manipulation so tree tip names match
+dat$bird_Tips <- gsub(pattern=" ", replace="_", x=dat$Frugivore_Species) 
+#Only include plant species for which phylogenetic info is available
+bird_phylo <- dplyr::filter(dat, bird_Tips %in% bird_subtree$tip.label) 
+
+comm <- as.data.frame.matrix(table(bird_phylo$Plant_Species, bird_phylo$bird_Tips))#Binary, unweighted intraction matrix.
+#The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
+bird_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+```
+
+```{r}
+test <- output
+test <- bird_mpd %>% rownames_to_column(., var="Plant_Species") %>% dplyr::select(., Plant_Species, ntaxa, mpd.obs.z )%>% left_join(output, ., by="Plant_Species") %>% dplyr::rename(., nplants_phylo=ntaxa, bird.mpd.z=mpd.obs.z)
+
+test <- pollintor_mpd %>% rownames_to_column(., var="Animal_Species") %>% dplyr::select(., Animal_Species, ntaxa, mpd.obs.z ) %>% left_join(test, ., by="Animal_Species") %>% dplyr::rename(., nplants_poll=ntaxa, pollen.mpd.z=mpd.obs.z)
+
+test <- test_mpd %>% rownames_to_column(., var="Animal_Species") %>% dplyr::select(., Animal_Species, ntaxa, mpd.obs.z )%>% left_join(test, ., by="Animal_Species") %>% dplyr::rename(., nplants_bird=ntaxa, birdplant.mpd.z=mpd.obs.z)
+
+```
+
+```{r}
+test <- dplyr::filter(test, is.na(aSuit)==F)
+test$interS <- test$aSuit*test$pSuit
+
+temp <- dplyr::filter(test, speciesPair==unique(test$speciesPair)[1])
+
+AUCs <- NULL
+
+for(i in 1:length(unique(test$speciesPair))){
+  temp <- dplyr::filter(test, speciesPair==unique(test$speciesPair)[i])
+  rOC <- try(pROC::roc(data=temp, response=interaction, predictor=interS))
+  if(class(rOC)=="try-error"){
+  sAUCtemp <- NA
+  }
+    if(class(rOC)!="try-error"){
+  sAUCtemp <- rOC$auc
+  }
+  ret <- data.frame(speciesPair=unique(test$speciesPair)[i], sAUC=sAUCtemp)
+  AUCs <- rbind(ret, AUCs)
+}
+
+
+test <- left_join(test, AUCs, by="speciesPair")
+
+res <- dplyr::select(test, -interaction, -Latitude, -Longitude, -nplants, -nAnimals, -size, -aSuit, -pSuit, -interS) %>% unique()
+```
+
+
+
+```{r}
+pollres <- dplyr::filter(res, type=="pollen")
+pollres <- pollres %>% group_by(Plant_Species) %>% mutate(plant_degree=n())
+pollres <- pollres %>% ungroup() %>% group_by(Animal_Species) %>% mutate(animal_degree=n())
+
+frugres <- dplyr::filter(res, type=="Frugivory")
+frugres <- frugres %>% group_by(Plant_Species) %>% mutate(plant_degree=n())
+frugres <- frugres %>% ungroup() %>% group_by(Animal_Species) %>% mutate(animal_degree=n())
+
+pollglm1 <- glm(sAUC~plant_degree+animal_degree+tot+AUC_Pl.x+AUC_An, data=pollres)
+summary(pollglm1)
+
+fruglm2 <- glm(sAUC~plant_degree+animal_degree+ birdplant.mpd.z+bird.mpd.z+tot+AUC_Pl+AUC_An, data=frugres)
+summary(fruglm2)
+
+#pdf(file="AUChist.pdf")
+hist(frugres$sAUC)
+#dev.off()
+```
+
+```{r}
+plot(x=frugres$birdplant.mpd.z, y=frugres$sAUC)
+plot(x=frugres$tot, y=frugres$sAUC)
+```
+
+```{r}
+nms$group[nms$species %in% amPol$Plant_Species] <- "Flowering Plant"
+nms$group[nms$species %in% amPol$Pollinator_Species] <- "Floral Visitor"
+nms$group[nms$species %in% frugMweb$Frugivore_Species] <- "Frugivore"
+nms$group[nms$species %in% frugMweb$Plant_Species] <- "Fruiting Plant"
+
+
+ggplot2::ggplot(data=nms, mapping = aes(x=AUC, color=group))+geom_histogram()
+
+library(ggplot2)
+
+nms 
+nms %>% dplyr::select(AUC, group) %>% unique() %>%
+  ggplot( aes(x=AUC, fill=group)) +
+    geom_histogram(bins=30, color="#e9ecef", alpha=0.6, position = 'identity') +
+    scale_fill_manual(values=c("#69b3a2", "#404080", "#a8328f", "#32a838")) +
+  theme_classic()+
+    labs(fill="")
+
+pdf(file="Figures/AUCDensity.pdf", width=11.5, height=8)
+nms %>% dplyr::select(AUC, group) %>% unique() %>%
+  ggplot( aes(x=AUC, fill=group)) +
+    geom_density(color="#e9ecef", alpha=0.6, position = 'identity') +
+    scale_fill_manual(values=c("#69b3a2", "#404080", "#a8328f", "#32a838")) +
+  theme_classic()+
+    labs(fill="")+xlab("Distribution Model AUC")+ylab("Relative Density")+theme(legend.position = "bottom")
+dev.off()
+```
+
+
+```{r}
+BienQ <- BIEN_matches %>% gsub("_", " ", .)
+traits <-BIEN::BIEN_trait_list()
+
+for(i in 1:nrow(traits)){
+  temp <- BIEN::BIEN_trait_mean(species=BienQ, trait=traits$trait_name[i])
+  gsub(" ", replacement="_", traits$trait_name)
+  filname <- paste("data/BIEN/", gsub(" ", replacement="_", traits$trait_name)[i], ".Rda" , sep="")
+  save(temp, file=filname)
+
+}
+temp
+```
+```{r}
+occs <- read.csv(file="../Data/composite_occs.csv")
+```
+```{r}
+head(occs)
+c <- dplyr::filter(occs, file==occs$file[1])
+occs$file[1]
+length(unique(occs$species))
+length(unique(occs$file))
+length(unique(c$species))
+i <- 1
+matches <- FALSE
+while(matches==FALSE){
+  c <- dplyr::filter(occs, file==occs$file[1])
+  if(length(unique(c$species))>1){
+    matches==TRUE
+  }
+  i <- i+1
+}
+
+```
+
+```{r}
+smallfrugweb <- dplyr::filter(frugMweb, Frugivore_Species %in% nms$species | Plant_Species %in% nms$species) %>% dplyr::select(., Frugivore_Species, Plant_Species)
+amPolsmall <- dplyr::filter(amPol, Pollinator_Species %in% nms$species | Plant_Species %in% nms$species)
+
+library(igraph)
+frugvis <-igraph::graph_from_data_frame(smallfrugweb)
+
+
+g <- graph.incidence(table(smallfrugweb), weighted = TRUE)
+is.bipartite(g)
+is.bipartite(g)
+V(g)$type
+
+set.seed(2)
+pdf(file="PosterFigs/frugivorenet.pdf")
+colrs <- c("#a8328f", "#32a838")[V(g)$type + 1L]
+shapes <- c("square", "circle")[V(g)$type + 1L]
+plot(g, layout=layout_nicely(g), vertex.size=7, vertex.shape=shapes, vertex.label=NA, vertex.color = colrs)
+dev.off()
+```
+
+```{r}
+amPolsmall <- dplyr::filter(amPol, Pollinator_Species %in% nms$species | Plant_Species %in% nms$species)
+
+g2 <- graph.incidence(table(amPolsmall), weighted = TRUE)
+
+set.seed(2)
+pdf(file="PosterFigs/pollnet.pdf")
+colrs <- c("#69b3a2", "#404080")[V(g2)$type + 1L]
+shapes <- c("square", "circle")[V(g2)$type + 1L]
+plot(g2, layout=layout_nicely(g2), vertex.size=7, vertex.shape=shapes, vertex.label=NA, vertex.color = colrs)
+dev.off()
+```
+
