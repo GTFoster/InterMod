@@ -192,7 +192,14 @@ ptraitsum <- ptrats_quant %>% group_by(., scrubbed_species_binomial, trait_name)
 
 We did some querying on another machine; let's see what data we've got
 ```{r}
+toquery <- unique(dat$Animal_Species, dat$Plant_Species)
 
+tet <- read.csv(file="data/composite_occs.csv")
+tet <- dplyr::filter(tet, species %in% toquery)
+
+missing <- toquery[toquery %in% tet$species==F]
+missing[missing=="Sphaerophoria macrogaster "] <- "Sphaerophoria macrogaster"
+save(missing, file="missingtoQuery.RDA")
 ```
 
 # Creating SDMS
