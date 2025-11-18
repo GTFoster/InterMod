@@ -2,12 +2,12 @@ library(tidyverse)
 library(gbifdb)
 library(rgbif) #Only used to find taxonkey
 
-load(file="missingtoQuery.RDA") #Load in our total species list
+load(file="GBIFdb_query.RDA") #Load in our total species list
 gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
 
 nmlist <- data.frame(Name=NA, ID=1, NROW=0) #Start an empty df to keep track of>
 
-for(name in unique(unlist(toQuery))){ #For each species
+for(name in unique(unlist(toquery))){ #For each species
 spdat <- gbif |> 
   filter(species == name) |> 
   collect() #Grab all occurence records for the species of interest and call is spdat
