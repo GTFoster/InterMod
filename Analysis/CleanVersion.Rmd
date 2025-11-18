@@ -11,13 +11,15 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(tidyverse)
+library(GIFT)
+library(terra)
 ```
 
 
 # Querying interaction data
 
 Frugivory networks from Moulatlet 2023
-```{r}
+```{r, eval=F}
 Moulatlet <- read.csv(file="../Data/datalong_v08_06_2023_CLEANED.csv") #Read in moulet interaction data
 Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction, lat, lon) %>% #Filter down to unique interactions
   dplyr::filter(interaction %in% (c(0,1))) %>%  
@@ -26,6 +28,12 @@ Moulatletval <- Moulatlet %>% dplyr::select(., Scientific, plant_id, interaction
   unique()
 
 Moulatletval$interaction <- as.numeric(Moulatletval$interaction) #Make sure col is numeric
+
+Moulatletval %>% 
+  dplyr::group_by(., Frugivore_Species, Plant_Species, Latitude, Longitude) %>%
+  dplyr::summarise(interaction=max(interaction, na.rm=T)) #If species have been observed both with a 0 and 1 at the same site, set to 1 (indicating we've seen this interaction here at least once)
+
+
 
 Mcounts <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) %>% #Make a "Species-pair" col
   group_by(., speciesPair) %>% #group by this
@@ -45,7 +53,10 @@ usable <- Mcounts %>% dplyr::filter(., tot>4 & prop>0) %>% unique()#Number of in
 Moulatletval <- Moulatletval %>% dplyr::mutate(., speciesPair=paste(Frugivore_Species, Plant_Species, sep="-")) #Create Species-pair column
 
 usable <- left_join(usable, Moulatletval, by="speciesPair") %>% unique() #Grab the usable interactions w/lat-long data
+```
 
+
+```{r, eval=F}
 length(unique(usable$Frugivore_Species))
 length(unique(usable$Plant_Species))
 
@@ -62,11 +73,11 @@ ggplot(data = world) +
 #dev.off()
 ```
 
-Now let's do plant-pollinator networks from WOL
+Plant-Pollinator networks queried from Web of Life
 
 Querying the web of life API. 
 Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
-```{r}
+```{r, eval=F}
 # define the base url
 base_url <- "https://www.web-of-life.es/"   
 json_url2 <- paste0(base_url,"get_networks.php?interaction_type=Pollination") 
@@ -77,14 +88,14 @@ length(unique(WolPols$network_name)) # 174 Networks
 ```
 
 Downloading the metaData on Wol data so that we have geometries
-```{r}
+```{r, eval=F}
 WolMeta <- read.csv(paste0(base_url,"get_network_info.php"))
 WolMeta <- WolMeta %>% dplyr::filter(., network_type%in%"Pollination") #Make sure we have only pollination
 length(unique(WolMeta$network_name)) #174 networks
 WolMeta <- WolMeta %>% dplyr::select(., network_name, region, latitude, longitude) %>% left_join(WolPols, ., by="network_name")
 ```
 
-```{r}
+```{r, eval=F}
 WolMeta <- WolMeta %>% 
     mutate(ID = group_indices(WolMeta, .dots=c("latitude", "longitude"))) #Some networks are grouped across time but are at the same site-I'm adding a grouping column for those here. 
 
@@ -109,21 +120,27 @@ for(i in 1:nsites){
 
 Repeat the process from above to find the usuable sets of plant-pollinator interactions. 
 
-```{r}
-pol2 <- exPoll %>% dplyr::mutate(., speciesPair=paste(Pollinator_Species, Plant_Species, sep="-")) %>% #Make a "Species-pair" col
-  group_by(., speciesPair) %>% #group by this
+```{r, eval=F}
+pol2 <- dplyr::mutate(exPoll, speciesPair=paste(Pollinator_Species, Plant_Species, sep="-")) #Make a "Species-pair" col
+
+pol2 <- pol2 %>% dplyr::group_by(., speciesPair, longitude, latitude) %>% dplyr::mutate(., interaction=max(interaction)) #In case there are repeated sites with 0 and 1 interactions, take the 1 (meaning it was observed there at least once)
+
+pol2 <- dplyr::select(pol2, -ID) %>% unique() #remove any redundant sites
+
+
+pol2 <- group_by(pol2, speciesPair) %>% #group by this
   dplyr::mutate(., pos=sum(interaction), tot=n(), neg=tot-pos)#count the number of positive and negative interaction presences across the Moulatletval data
-pol2$prop <- pol2$pos/pol2$tot
+
+pol2$prop <- pol2$pos/pol2$tot #create a proportion column
 
 usable_Pol <-pol2 %>% dplyr::filter(., tot>4 & prop>0) %>% unique() #Filter to those that cooccur at at least 4 sites
 
 usable_Pol <- dplyr::filter(usable_Pol, grepl(" sp\\d+", speciesPair)==F) #remove entries not ID'ed to species
-length(unique(usable_Pol$speciesPair)) 
 ```
 
 
 
-```{r}
+```{r, eval=F}
 WolMeta$speciesPair <- paste(WolMeta$species2, WolMeta$species1, sep="-")
 
 WolUsable <- left_join(usable_Pol, WolMeta, by="speciesPair")
@@ -131,23 +148,39 @@ length(unique(WolUsable$species1))
 length(unique(WolUsable$species2))
 ```
 Below we create a df called "dat" which contains all the interactions that fit our criterion across both network types. 
-```{r}
+```{r, eval=F}
 colnames(usable)
 usable2 <- dplyr::rename(usable, Animal_Species=Frugivore_Species) %>% dplyr::select(., "speciesPair", "Animal_Species", "Plant_Species", "interaction", "pos","neg","tot","prop","Longitude","Latitude")
 usable2$Class <- "Frug"
-
 
 usable_Pol2 <- usable_Pol %>% dplyr::rename(., Animal_Species=Pollinator_Species, Longitude=longitude, Latitude=latitude) %>% dplyr::select(., "speciesPair", "Animal_Species", "Plant_Species", "interaction", "pos","neg","tot","prop","Longitude","Latitude")
 usable_Pol2$Class <- "Poll"
 
 dat <- rbind(usable2, usable_Pol2)
+
+#write.csv(dat, file="data/interactionOccs.csv", row.names = F)
+#save(WolMeta, Moulatletval, file="data/interactionWebs.RDA")
 ```
 
-Edit: Previously I was working with Mangel, but turns out it's already included in wol. Womp womp. 
+Loading in the outputs created from above
+```{r}
+dat <- read.csv(file="data/interactionOccs.csv")
+load(file="data/interactionWebs.RDA")
+```
+
+Grabbing occurence points
+```{r}
+gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
+
+gbif
+
+spdat <- gbif |> 
+  filter(specieskey == x$speciesKey) |> 
+  collect() #Grab all occurence records for the species of interest and call is spdat
+```
 
 
 # Quantifying interaction specialism
-
 ```{r}
 FrugPartners <- dplyr::filter(Moulatletval, Frugivore_Species %in% dat$Animal_Species) #All interactions with the focal frugivore species
 PollPartners <- dplyr::filter(WolPols, species2 %in% dat$Animal_Species) #All interactions with the focal pollinator species
@@ -166,11 +199,14 @@ plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running 
 
 #write.csv(plant_traits, file="data/traits/plant_traits5K.csv", row.names = F)
 
+BIENSP <- BIEN::BIEN_list_all()
+
+pmatches <- plants[plants %in% BIENSP$species]
 ```
 Loading in those plant traits and taking species-level averages
 
-```{r}
 
+```{r}
 dat1 <- read.csv(file="data/traits/plant_traits1K.csv")
 dat2 <- read.csv(file="data/traits/plant_traits2K.csv")
 dat34 <- read.csv(file="data/traits/plant_traits3-4K.csv")
@@ -188,21 +224,189 @@ ptrats_qual <- ptraits %>% dplyr::filter(., is.na(unit)==TRUE)
 ptraitsum <- ptrats_quant %>% group_by(., scrubbed_species_binomial, trait_name) %>%  dplyr::summarise(trait_mean=mean(trait_value, na.rm = TRUE)) %>% dplyr::filter(., trait_mean>0)
 ```
 
+Let's pivot these traits wider and see which ones we have a bunch of estimates of.
+```{r}
+wide <- pivot_wider(ptraitsum, id_cols=scrubbed_species_binomial, names_from=trait_name, values_from=trait_mean) #Pivot_wider
+
+#filling in plant height. For species that don't have a "whole plant height" sub with max plant height
+wide$`whole plant height`[is.na(wide$`maximum whole plant height`)==F& is.na(wide$`whole plant height`)==T] <- wide$`maximum whole plant height`[is.na(wide$`maximum whole plant height`)==F& is.na(wide$`whole plant height`)==T]
+
+wide$`whole plant height`[is.na(wide$`minimum whole plant height`)== F& is.na(wide$`whole plant height`)==T] <- wide$`maximum whole plant height`[is.na(wide$`maximum whole plant height`)==F& is.na(wide$`whole plant height`)==T]
+
+#Summarising how many species we have trait values for
+sort(nrow(wide)-colSums(is.na(wide)), decreasing=T)
+
+#Let's split across our networks and see if it's any better
+pollwide <- dplyr::filter(wide, scrubbed_species_binomial %in% WolPols$species1)
+sort(nrow(pollwide)-colSums(is.na(pollwide)), decreasing=T)
+length(unique(WolPols$species1))
+
+
+frugwide <- dplyr::filter(wide, scrubbed_species_binomial %in% FrugPartners$Plant_Species)
+length(unique(FrugPartners$Plant_Species))
+```
+Conclusion: We just don't have enough plant trait data, at least not from BIEN alone.
+
+Let's try to add traits from GIFT and TRY
+
+GIFT First
+```{r}
+trait_meta <- GIFT_traits_meta()
+GIFT_query <- dplyr::filter(trait_meta, Trait2 %in% c("Plant_height_mean", "DBH_min", "DBH_max", "Lifespan", "Seed_length_mean", "Fruit_length_mean", "Flower_colour", "Inflorescence", "SLA_mean", "Leaf_size_mean"))
+
+GIFT_Traits <- GIFT_traits(
+  trait_IDs = GIFT_query$Lvl3,
+  agreement = 0.66,
+  bias_ref = TRUE,
+  bias_deriv = TRUE,
+  api = "https://gift.uni-goettingen.de/api/extended/",
+  GIFT_version = "latest"
+)
+
+colnames(GIFT_Traits)
+head(GIFT_Traits)
+
+GIFT_Traits <- dplyr::filter(GIFT_Traits, work_species %in% plants)
+```
+So Gift adds some measures and ~156 new species, but all in all not that many. Let's check try
+
+
+```{r}
+focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
+```
+
+
 # Querying GBIF occurence points
 
 We did some querying on another machine; let's see what data we've got
 ```{r}
-toquery <- unique(dat$Animal_Species, dat$Plant_Species)
+toquery <- unique(c(dat$Animal_Species, dat$Plant_Species))
+save(toquery, file="GBIFdb_query.RDA")
 
-tet <- read.csv(file="data/composite_occs.csv")
-tet <- dplyr::filter(tet, species %in% toquery)
+#tet <- read.csv(file="data/composite_occs.csv")
+#tet <- dplyr::filter(tet, species %in% toquery)
 
-missing <- toquery[toquery %in% tet$species==F]
+#missing <- toquery[toquery %in% tet$species==F]
 missing[missing=="Sphaerophoria macrogaster "] <- "Sphaerophoria macrogaster"
-save(missing, file="missingtoQuery.RDA")
+#save(missing, file="missingtoQuery.RDA")
 ```
+
+Quantifying range overlap
+
+```{r}
+overlap <- dplyr::select(dat, speciesPair, Animal_Species, Plant_Species) %>% unique()
+
+gsub(" ","_",paste("MaxentModels2/Maxent_test", tolower(dat$Animal_Species[3])))
+```
+
+
 
 # Creating SDMS
 
-# Analyzing SDM outputs
+First, make a function to train Maxent
+```{r}
+trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(-80,-35,-60,5)){
+    Occ <- as.data.frame(Occ)
+    colnames(Occ) <- c("species", "decimalLongitude", "decimalLatitude")
+    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurrence cells
+    #creating a 200km2 buffer to select the psudo-absence points
+    Occ <- unique(Occ) #remove redundant records
+    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200km) buffers
+    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
+    
+    
+    ##Masking the buffer so that it does not occur in the ocean
+    OccBufferVect <- terra::vect(OccBuffer)
+    OccBufferRas <-terra::rasterize(x = OccBufferVect, y=Clima)
+    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    
+    ##Selecting the potential pseudo absence sites
+    AllPseudo <- terra::as.points(OccBufferRas)
+    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
+    AllPseudo <-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),] #remove true presence from potential psuedo points
+    
+    #Actually sample psuedoabsences
+    set.seed(seed)
+    PseudoA<-sample(x = AllPseudo$cell, size = nrow(Occ)) #Sample a number of psuedoA equal to # of occurances
+    PseudoA<-as.data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA)) #Make a df
+    
+    #Now, train a Maxent model
+    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2]) #bind into 4 cols; left is real, right is associated psuedo
+    colnames(Occurrences)<-c('Long','Lat','x','y')
+    
+
+    id.training<-sample(1:nrow(Occurrences),round(split*nrow(Occurrences),0)) #create test-train split (split=percent train)
+    training<-dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")])  #Use dismo prepare data to set up df
+    testing<-dismo::prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
+    training<-na.omit(training)
+    testing<-na.omit(testing)
+      
+    colnames(Occurrences)<-rep(c('Long','Lat'),2) #Change names
+    testingPresPA<-rbind.data.frame(Occurrences[-id.training,1:2],Occurrences[-id.training,3:4])
+    
+          ##Maxent
+    Sys.setenv(NOAWT=TRUE)
+    Maxent.Model <-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
+    
+    
+    Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') #Predict suitability according to trained model
+    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+
+    
+    Max0cut <- Maxent.0
+    Max0cut <- terra::crop(x=Max0cut, y=cropextent) #Crop the predicted model to smaller extent
+    
+    output <- list(prediction=Max0cut, eval=Maxent.eval, sp=sp)
+    return(output)
+}    
+```
+
+Perform a PCA on our environmental data to grab some predictors
+```{r}
+Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
+tet$cells <- terra::cellFromXY(object= Clima[[1]], xy = tet[,5:4])
+
+indcells_tet <- dplyr::group_by(tet, species, cells) %>% dplyr::slice_sample(n = 1)
+
+OccSf <-sf::st_as_sf(x=tet[1:1000,5:4], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+
+points_proj <- sf::st_transform(OccSf, crs = "+proj=moll")
+
+# Create 200 km buffers (buffer distance in meters)
+buffers <- sf::st_buffer(points_proj, dist = 200000)
+
+OccBuffer <-sf::st_union(buffers) #Merge buffer objects into one
+
+
+plot(Clima[[1]])
+polygon(buffers)
+
+points(points_proj, pch=16)
+
+
+OccSf <-sf::st_as_sf(x=indcells_tet[,5:4], coords = c("decimalLongitude",'decimalLatitude'), 
+                        crs=sp::CRS("ESRI:54009")) #Using an equal-distance projection
+
+OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200km) buffers
+
+plot(OccBuffer)
+plot(Clima[[1]])
+points(OccSf)
+```
+
+
+
+```{r}
+missing
+
+indexvalue <- 1
+temp <- dplyr::filter(tet, species==toquery[indexvalue])
+
+trainMaxent(temp[,c(2,4,5)])
+```
+
+
 
