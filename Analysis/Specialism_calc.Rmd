@@ -17,27 +17,25 @@ library(BIEN)
 
 ```{r}
 sp <- unlist(read.csv(file="data/speciestoQuery.csv")) #Read in our species names to query
-
 dat <- read.csv(file="data/FrugivoreMetaweb.csv") #load in entire interaction set (subset of Moulatlet)
 
-frugMweb <- dat %>% dplyr::select(., -Latitude, -Longitude) %>% unique() #Remove redundancies across location - CHANGE THIS IS YOU CARE ABOUT EDGE WEIGHTS
+frugMweb <- dat %>% dplyr::select(., -Latitude, -Longitude) %>% unique() 
 
 plants <- unique(frugMweb$Plant_Species)
 ```
 
 Grabbing plant functional traits from BIEN. Cool idea, but right now tends to take too long. 
 ```{r, eval=FALSE}
-c <- BIEN::BIEN_trait_mean(plants[1:2], trait = "diameter at breast height (1.3 m)")
-ptraits1 <- BIEN::BIEN_trait_species(species=plants[1:999])
-BIEN
-contptraits <- ptraits %>% dplyr::filter(.,trait_name %in% c("diameter at breast height (1.3 m)", "leaf area per leaf dry mass", "leaf dry mass per leaf fresh mass", "leaf nitrogen content per leaf dry mass", "seed mass", "whole plant height", "leaf life span", "leaf area"))
-contptraits$trait_value <- as.numeric(contptraits$trait_value)
-contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
+#c <- BIEN::BIEN_trait_mean(plants[1:2], trait = "diameter at breast height (1.3 m)")
+#ptraits1 <- BIEN::BIEN_trait_species(species=plants[1:999])
+
+#contptraits <- ptraits %>% dplyr::filter(.,trait_name %in% c("diameter at breast height (1.3 m)", "leaf area per leaf dry mass", "leaf dry mass per leaf fresh mass", "leaf nitrogen content per leaf dry mass", "seed mass", "whole plant height", "leaf life span", "leaf area"))
+#contptraits$trait_value <- as.numeric(contptraits$trait_value)
+#contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
 
 
-contptraits$trait_value <- as.numeric(contptraits$trait_value)
-contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
-
+#contptraits$trait_value <- as.numeric(contptraits$trait_value)
+#contptraits <- contptraits %>% select(scrubbed_species_binomial, trait_name, trait_value, unit) %>% group_by(scrubbed_species_binomial, trait_name) %>% dplyr::summarise(traitmean=mean(trait_value, na.rm=T))
 ```
 
 START HERE: Add in congenerics as rooted polytomies (like in Fruglink)

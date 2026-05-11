@@ -168,17 +168,20 @@ dat <- read.csv(file="data/interactionOccs.csv")
 load(file="data/interactionWebs.RDA")
 ```
 
-Grabbing occurence points
+Grabbing taxonkeys from rgbif to more easily interface with gbifdb
 ```{r}
-gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
-
-gbif
-
-spdat <- gbif |> 
-  filter(specieskey == x$speciesKey) |> 
-  collect() #Grab all occurence records for the species of interest and call is spdat
+taxa <- rgbif::name_backbone_checklist(unique(dat$Animal_Species, dat$Plant_Species))
+#Searched term is in verbatim_name column
+taxa_safe <- dplyr::filter(taxa, is.na(speciesKey)==F)
+write.csv(taxa_safe, file="backbone_matches.csv", row.names=FALSE)
 ```
 
+
+
+Grabbing occurence points
+```{r, eval=FALSE}
+gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
+```
 
 # Quantifying interaction specialism
 ```{r}
@@ -300,7 +303,6 @@ gsub(" ","_",paste("MaxentModels2/Maxent_test", tolower(dat$Animal_Species[3])))
 ```
 
 
-
 # Creating SDMS
 
 First, make a function to train Maxent
@@ -395,17 +397,6 @@ OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200k
 plot(OccBuffer)
 plot(Clima[[1]])
 points(OccSf)
-```
-
-
-
-```{r}
-missing
-
-indexvalue <- 1
-temp <- dplyr::filter(tet, species==toquery[indexvalue])
-
-trainMaxent(temp[,c(2,4,5)])
 ```
 
 
