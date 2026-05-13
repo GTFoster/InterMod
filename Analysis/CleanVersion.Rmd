@@ -77,14 +77,14 @@ Plant-Pollinator networks queried from Web of Life
 
 Querying the web of life API. 
 Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
-```{r, eval=F}
+```{r}
 # define the base url
 base_url <- "https://www.web-of-life.es/"   
 json_url2 <- paste0(base_url,"get_networks.php?interaction_type=Pollination") 
 
 WolPols <- jsonlite::fromJSON(json_url2)
 WolMeta <- read.csv(paste0(base_url,"get_network_info.php")) %>%dplyr::filter(., network_type%in%"Pollination")
-length(unique(WolPols$network_name)) # 174 Networks
+#length(unique(WolPols$network_name)) # 174 Networks
 ```
 
 Downloading the metaData on Wol data so that we have geometries
@@ -170,20 +170,15 @@ load(file="data/interactionWebs.RDA")
 
 Grabbing taxonkeys from rgbif to more easily interface with gbifdb
 ```{r}
-taxa <- rgbif::name_backbone_checklist(unique(dat$Animal_Species, dat$Plant_Species))
+taxa <- rgbif::name_backbone_checklist(unique(c(dat$Animal_Species, dat$Plant_Species)))
 #Searched term is in verbatim_name column
 taxa_safe <- dplyr::filter(taxa, is.na(speciesKey)==F)
-write.csv(taxa_safe, file="backbone_matches.csv", row.names=FALSE)
-```
-
-
-
-Grabbing occurence points
-```{r, eval=FALSE}
-gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
+write.csv(taxa_safe, file="backbone_matches.csv", row.names=FALSE) #We use this output in GBIFdb_Querying.R to grab occurence points
 ```
 
 # Quantifying interaction specialism
+
+## Looking at Plant Traits (Floral Visitor Specialism)
 ```{r}
 FrugPartners <- dplyr::filter(Moulatletval, Frugivore_Species %in% dat$Animal_Species) #All interactions with the focal frugivore species
 PollPartners <- dplyr::filter(WolPols, species2 %in% dat$Animal_Species) #All interactions with the focal pollinator species
@@ -193,21 +188,18 @@ trait_vector <- c("leaf area", "maximum fruit length", "maximum whole plant heig
 plants <- unique(FrugPartners$Plant_Species, WolPols$species1)
 plants <- plants[grepl("\\d", plants)==FALSE]
 
-save(plants, file="BIENstuff.Rda")
+#save(plants, file="BIENstuff.Rda")
 ```
 
 Query those plants in BIEN
 ```{r}
-plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running this all at once, so I split the query into 4 files of ~1k-1.5K each  
-
+#plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running this all at once, so I split the query into 4 files of ~1k-1.5K each  
 #write.csv(plant_traits, file="data/traits/plant_traits5K.csv", row.names = F)
-
 BIENSP <- BIEN::BIEN_list_all()
 
 pmatches <- plants[plants %in% BIENSP$species]
 ```
 Loading in those plant traits and taking species-level averages
-
 
 ```{r}
 dat1 <- read.csv(file="data/traits/plant_traits1K.csv")
@@ -271,37 +263,38 @@ head(GIFT_Traits)
 
 GIFT_Traits <- dplyr::filter(GIFT_Traits, work_species %in% plants)
 ```
-So Gift adds some measures and ~156 new species, but all in all not that many. Let's check try
+So Gift adds some measures and ~156 new species, but all in all not that many. Let's check the TRY database
+https://www.try-db.org/TryWeb/Home.php
+```{r}
+library(rtry)
+TRY <- rtry_import("data/TRYQuery_InterMod.txt")
+TRY <- rtry::rtry_remove_dup(TRY)
+TRY <- dplyr::filter(TRY, is.na(TraitID)==FALSE) #If missing, really mostly a random collection of measurements.
 
+contTRY <- dplyr::filter(TRY, TraitID %in% c(26, 3106, 3117, 27, 918, 18))
+
+contTRYsummary <- contTRY %>%
+  dplyr::filter(., is.na(UnitName)==F) %>%
+  dplyr::group_by(TraitName, TraitID, AccSpeciesName, UnitName) %>% 
+  dplyr::summarise(., meanMeasure=mean(StdValue, na.rm=T), nmeasures=n())
+
+qualTry <- dplyr::filter(TRY, TraitID %in%  c(59,207,585))
+
+x <- dplyr::filter(qualTry, TraitID==207)
+#write.csv(contTRYsummary, file="contTRYsummary.csv", row.names = F)
+#write.csv(qualTry, file="qualTry.csv", row.names = F)
+```
+
+TRY DATA REQUEST GOES HERE
 
 ```{r}
 focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
 ```
 
-
-# Querying GBIF occurence points
-
-We did some querying on another machine; let's see what data we've got
-```{r}
-toquery <- unique(c(dat$Animal_Species, dat$Plant_Species))
-save(toquery, file="GBIFdb_query.RDA")
-
-#tet <- read.csv(file="data/composite_occs.csv")
-#tet <- dplyr::filter(tet, species %in% toquery)
-
-#missing <- toquery[toquery %in% tet$species==F]
-missing[missing=="Sphaerophoria macrogaster "] <- "Sphaerophoria macrogaster"
-#save(missing, file="missingtoQuery.RDA")
-```
-
-Quantifying range overlap
-
-```{r}
-overlap <- dplyr::select(dat, speciesPair, Animal_Species, Plant_Species) %>% unique()
-
-gsub(" ","_",paste("MaxentModels2/Maxent_test", tolower(dat$Animal_Species[3])))
-```
-
+## Looking at Animal Traits (Plant Specialism)
+This is something we can revisit down the line if we want, but we're somewhat data limited right now. For now, we'll focus on plant traits, as the active choice of who to interact with is being made by the animal anyways, so specialism-generalism seems bit more relevant from that side. 
+Pollinator Traits
+Frugivore Traits (AvoNet)
 
 # Creating SDMS
 

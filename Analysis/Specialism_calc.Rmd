@@ -122,7 +122,6 @@ test <- bird_mpd %>% rownames_to_column(., var="Plant_Species") %>% dplyr::selec
 test <- pollintor_mpd %>% rownames_to_column(., var="Animal_Species") %>% dplyr::select(., Animal_Species, ntaxa, mpd.obs.z ) %>% left_join(test, ., by="Animal_Species") %>% dplyr::rename(., nplants_poll=ntaxa, pollen.mpd.z=mpd.obs.z)
 
 test <- test_mpd %>% rownames_to_column(., var="Animal_Species") %>% dplyr::select(., Animal_Species, ntaxa, mpd.obs.z )%>% left_join(test, ., by="Animal_Species") %>% dplyr::rename(., nplants_bird=ntaxa, birdplant.mpd.z=mpd.obs.z)
-
 ```
 
 ```{r}
