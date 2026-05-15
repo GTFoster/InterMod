@@ -247,7 +247,7 @@ Let's try to add traits from GIFT and TRY
 GIFT First
 ```{r}
 trait_meta <- GIFT_traits_meta()
-GIFT_query <- dplyr::filter(trait_meta, Trait2 %in% c("Plant_height_mean", "DBH_min", "DBH_max", "Lifespan", "Seed_length_mean", "Fruit_length_mean", "Flower_colour", "SLA_mean"))
+GIFT_query <- dplyr::filter(trait_meta, Trait2 %in% c("Plant_height_mean", "DBH_min", "DBH_max", "Lifespan", "Seed_length_mean", "Fruit_length_mean", "Flower_colour", "Inflorescence", "SLA_mean", "Leaf_size_mean"))
 
 GIFT_Traits <- GIFT_traits(
   trait_IDs = GIFT_query$Lvl3,
@@ -280,6 +280,8 @@ contTRYsummary <- contTRY %>%
   dplyr::summarise(., meanMeasure=mean(StdValue, na.rm=T), nmeasures=n())
 
 qualTry <- dplyr::filter(TRY, TraitID %in%  c(59,207,585))
+
+x <- dplyr::filter(qualTry, TraitID==207)
 #write.csv(contTRYsummary, file="contTRYsummary.csv", row.names = F)
 #write.csv(qualTry, file="qualTry.csv", row.names = F)
 ```
@@ -692,16 +694,25 @@ qualTry_summary <- plantAge_final %>% dplyr::select(., -Nvotes) %>%
   full_join(., dplyr::select(fruitClr_final, -Nvotes), by = join_by(AccSpeciesName)) %>% #join fruit color
   full_join(., fwrClr_Final, by= join_by(AccSpeciesName)) #join flower color
 
-contTRYsummary <- dplyr::filter(contTRYsummary, is.na(meanMeasure)==F)
+traitname_map <- c("Fruit length"="fruit_length_mm",
+  "Leaf area per leaf dry mass (specific leaf area, SLA or 1/LMA): undefined if petiole is in- or excluded"="SLA_mm2/mg",
+  "Plant height"="plant_height_m",
+  "Plant height vegetative"="plant_height_vegetative_m",
+  "Seed dry mass"="seed_mass_mg",
+  "Seed length"="seed_length_mm")
+
+contTRYsummary <- dplyr::filter(contTRYsummary, is.na(meanMeasure)==F) %>%
+  dplyr::filter(., is.na(TraitName)==F) 
+
+contTRYsummary$TraitName <- unname(
+  traitname_map[contTRYsummary$TraitName] #msimplify column names before pivoting
+)
 
 contTRYsummary <- contTRYsummary %>% 
-  select(AccSpeciesName, TraitName, meanMeasure) %>%
-  pivot_wider(
-    id_cols = AccSpeciesName,
-    names_from = TraitName,
-    values_from = meanMeasure)
+  dplyr::select(., AccSpeciesName, TraitName, meanMeasure) %>%
+  pivot_wider(., id_cols=AccSpeciesName, names_from=TraitName, values_from = meanMeasure)
 
-TrySummary <- full_join(contTRYsummary, qualTry_summary, by=join_by(AccSpeciesName))
+Trysummary <- full_join(qualTry_summary, contTRYsummary, by=join_by(AccSpeciesName))
 ```
 
 
