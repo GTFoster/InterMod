@@ -162,7 +162,6 @@ SA_nms<-wrld[SouthAme,17] ##Americas
 
 #Getting climate data
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=10)
-terra::plot(Clima[[1]])
 
 #Here's loading all of these in and merging them
 #tile53 <- raster::stack("worldclim/wc2.1_tiles/tile_53_wc2.1_30s_bio.tif")

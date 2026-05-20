@@ -162,11 +162,22 @@ dat <- rbind(usable2, usable_Pol2)
 #save(WolMeta, Moulatletval, file="data/interactionWebs.RDA")
 ```
 
+
 Loading in the outputs created from above
 ```{r}
 dat <- read.csv(file="data/interactionOccs.csv")
 load(file="data/interactionWebs.RDA")
 ```
+
+
+```{r}
+frug1 <- dplyr::filter(dat, Class=="Frug")
+poll1 <- dplyr::filter(dat, Class=="Poll")
+
+hist(frug1$tot, main="Frugivore Interactions # of coccurences", xlab="# of coocs")
+hist(poll1$tot, main="Pollinator Interactions # of coccurences", xlab="# of coocs")
+```
+
 
 Grabbing taxonkeys from rgbif to more easily interface with gbifdb
 ```{r}
@@ -208,11 +219,15 @@ dat34 <- read.csv(file="data/traits/plant_traits3-4K.csv")
 dat5 <- read.csv(file="data/traits/plant_traits5K.csv")
 
 ptraits <- rbind(dat1, dat2, dat34, dat5)
+rm(dat1, dat2, dat34, dat5)
 
 psums <- ptraits %>% group_by(., scrubbed_species_binomial, trait_name) %>%  dplyr::summarise(trait_mean=mean(trait_value, na.rm = TRUE))
 
 ptrats_quant <- ptraits %>% dplyr::filter(., is.na(unit)==FALSE)
 ptrats_quant$trait_value <- as.numeric(ptrats_quant$trait_value)
+
+ptrats_quant <- dplyr::filter(ptrats_quant, trait_name!="diameter at breast height (1.3 m)" | project_pi !="Richard Condit") #This source has a bunch of dbh junk data; removing it.
+
 
 ptrats_qual <- ptraits %>% dplyr::filter(., is.na(unit)==TRUE)
 
@@ -231,23 +246,110 @@ wide$`whole plant height`[is.na(wide$`minimum whole plant height`)== F& is.na(wi
 #Summarising how many species we have trait values for
 sort(nrow(wide)-colSums(is.na(wide)), decreasing=T)
 
-#Let's split across our networks and see if it's any better
-pollwide <- dplyr::filter(wide, scrubbed_species_binomial %in% WolPols$species1)
-sort(nrow(pollwide)-colSums(is.na(pollwide)), decreasing=T)
-length(unique(WolPols$species1))
-
-
-frugwide <- dplyr::filter(wide, scrubbed_species_binomial %in% FrugPartners$Plant_Species)
-length(unique(FrugPartners$Plant_Species))
+wide$fruitlength <- (wide$`maximum fruit length`-wide$`minimum fruit length`)/2 #If contains both min and max take mean
+wide$fruitlength[is.na(wide$fruitlength)==T] <- wide$`maximum fruit length`[is.na(wide$fruitlength)==T] #If no mean, take max
+wide$fruitlength[is.na(wide$fruitlength)==T] <- wide$`minimum fruit length`[is.na(wide$fruitlength)==T] #If no max, take min
+BIENsum <- dplyr::select(wide, "scrubbed_species_binomial", "leaf area per leaf dry mass", "seed length", "seed mass", "whole plant height", "fruitlength", "diameter at breast height (1.3 m)") %>% unique()
+hist(BIENsum$`diameter at breast height (1.3 m)`)
+colnames(BIENsum) <- c("AccSpeciesName", "SLA_mm2/mg", "seed_length_mm", "seed_mass_mg", "plant_height_m", "fruit_length_mm", "DBH_cm")
 ```
-Conclusion: We just don't have enough plant trait data, at least not from BIEN alone.
 
-Let's try to add traits from GIFT and TRY
 
-GIFT First
+Alright, now working with qualitative traits from BIEN
 ```{r}
+ptrats_qual <- dplyr::filter(ptrats_qual, trait_name %in% c("flower color"))
+
+flower_color_map_db2 <- c(
+  # White
+  "White" = "white",
+  "White_" = "white",
+  "Cream" = "white",
+  "Creamy_white" = "white",
+  "Cream-whitish" = "white",
+  "White-cream" = "white",
+
+  # Yellow
+  "Yellow" = "yellow",
+  "Yellowish" = "yellow",
+  "Yellow-cream" = "yellow",
+  "Cream-yellow" = "yellow",
+  "White-golden_yellow" = "yellow",
+  "Greenish_yellow" = "yellow",
+  "Whitish-yellowish" = "yellow",
+
+  # Green
+  "Green" = "green",
+  "Greenish" = "green",
+  "Light_green" = "green",
+  "Pale_green" = "green",
+  "Green_buds" = "green",
+  "Yellowish_green" = "green",
+  "Yellow_green" = "green",
+  "Whitish_green" = "green",
+  "Light_green-whitish" = "green",
+  "Pale_green-white" = "green",
+  "White-green" = "green",
+  "Green-whitish" = "green",
+  "White-greenish" = "green",
+  "Green-pale_green-cream"="green",
+
+  # Red
+  "Red" = "red",
+  "Reddish" = "red",
+
+  # Pink
+  "Pink" = "pink",
+  "White-pink" = "pink",
+
+  # Orange
+  "Orange" = "orange",
+
+  # Blue
+  "Blue" = "blue",
+
+  # Brown
+  "Brown" = "brown",
+  "Browish" = "brown",
+  "Yellowish_brown" = "brown",
+
+  # Purple
+  "Purple" = "purple",
+  "Blue-purple" = "purple",
+  "Purple-reddish" = "purple",
+  "Pink-Light_purple" = "purple",
+
+  # Multicolored
+  "Green-golden_yellow" = "multicolored"
+)
+```
+
+```{r}
+ptrats_qual$FlowerColor_simple <- unname(
+  flower_color_map_db2[ptrats_qual$trait_value]
+)
+ptrats_qual <- dplyr::select(ptrats_qual, scrubbed_species_binomial, FlowerColor_simple) %>% unique()
+
+BIEN_flclr <- dplyr::select(ptrats_qual, scrubbed_species_binomial, FlowerColor_simple) %>% 
+  unique() %>%
+  mutate(value = 1) %>% #to grab positive for pivot_wider
+    pivot_wider(
+    names_from = FlowerColor_simple,
+    values_from = value,
+    values_fill = 0,
+    names_prefix = "flower_"
+) %>%
+  dplyr::rename(., AccSpeciesName=scrubbed_species_binomial)
+```
+
+```{r}
+BIENsum <- full_join(BIENsum, BIEN_flclr, by=join_by(AccSpeciesName))
+```
+
+Below is code starting to query GIFT, though I haven't actually incorporated it. 
+GIFT First
+```{r, eval=FALSE}
 trait_meta <- GIFT_traits_meta()
-GIFT_query <- dplyr::filter(trait_meta, Trait2 %in% c("Plant_height_mean", "DBH_min", "DBH_max", "Lifespan", "Seed_length_mean", "Fruit_length_mean", "Flower_colour", "Inflorescence", "SLA_mean", "Leaf_size_mean"))
+GIFT_query <- dplyr::filter(trait_meta, Trait2 %in% c("Plant_height_mean", "DBH_min", "DBH_max", "Lifespan", "Seed_length_mean", "Fruit_length_mean", "Flower_colour", "SLA_mean"))
 
 GIFT_Traits <- GIFT_traits(
   trait_IDs = GIFT_query$Lvl3,
@@ -257,16 +359,14 @@ GIFT_Traits <- GIFT_traits(
   api = "https://gift.uni-goettingen.de/api/extended/",
   GIFT_version = "latest"
 )
-
-colnames(GIFT_Traits)
-head(GIFT_Traits)
+GIFT_query$
 
 GIFT_Traits <- dplyr::filter(GIFT_Traits, work_species %in% plants)
 ```
 
-So Gift adds some measures and ~156 new species, but all in all not that many. Let's check the TRY database
+Below I load in a TRY data request. 
 https://www.try-db.org/TryWeb/Home.php
-```{r}
+```{r, eval=FALSE}
 library(rtry)
 TRY <- rtry_import("data/TRYQuery_InterMod.txt")
 TRY <- rtry::rtry_remove_dup(TRY)
@@ -280,8 +380,6 @@ contTRYsummary <- contTRY %>%
   dplyr::summarise(., meanMeasure=mean(StdValue, na.rm=T), nmeasures=n())
 
 qualTry <- dplyr::filter(TRY, TraitID %in%  c(59,207,585))
-
-x <- dplyr::filter(qualTry, TraitID==207)
 #write.csv(contTRYsummary, file="contTRYsummary.csv", row.names = F)
 #write.csv(qualTry, file="qualTry.csv", row.names = F)
 ```
@@ -715,6 +813,10 @@ contTRYsummary <- contTRYsummary %>%
 Trysummary <- full_join(qualTry_summary, contTRYsummary, by=join_by(AccSpeciesName))
 ```
 
+Combining our data into one trait set
+```{r}
+PTraits <- full_join(BIENsum, Trysummary) #NEED to join such that each species has a unique entry; do so!
+```
 
 ```{r}
 focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
@@ -726,25 +828,35 @@ Pollinator Traits
 Frugivore Traits (AvoNet)
 
 # Creating SDMS
+  Next steps + thoughts: perform PCA on smaller extent. Also do on icebox, or just do a subset. 
+First, let's work on our climate data features. 
+```{r}
+
+```
+
 
 First, make a function to train Maxent
 ```{r}
+Occ <- read.csv(file="data/GBIF/occs/coereba_flaveola.csv")
+Occ <- Occ[sample(1:nrow(Occ), 10000, replace = F),]  #subsampling to make it easier to work with
+
 trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(-80,-35,-60,5)){
     Occ <- as.data.frame(Occ)
-    colnames(Occ) <- c("species", "decimalLongitude", "decimalLatitude")
+    Occ <- dplyr::select(Occ, species, decimallongitude, decimallatitude) %>% unique() #remove redundant records
     Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurrence cells
+    
+    Occ <- Occ %>% dplyr::group_by(cells) %>%
+      slice_sample() #Grab one unique coordinate from each cell
+    
     #creating a 200km2 buffer to select the psudo-absence points
-    Occ <- unique(Occ) #remove redundant records
-    OccSf<-sf::st_as_sf(x=Occ[,2:3], coords = c("decimalLongitude",'decimalLatitude'), 
-                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
-    OccBuffer<-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200km) buffers
-    OccBuffer<-sf::st_union(OccBuffer) #Merge buffer objects into one
     
+    OccTerra <- terra::vect(x=Occ[,2:3], crs = "+proj=longlat +datum=WGS84") #Create SpatVector object 
+    OccBuffer <- terra::buffer(OccTerra, width=200000) #Create 200km buffer
     
-    ##Masking the buffer so that it does not occur in the ocean
-    OccBufferVect <- terra::vect(OccBuffer)
-    OccBufferRas <-terra::rasterize(x = OccBufferVect, y=Clima)
-    OccBufferRas<-raster::mask(x = OccBufferRas, mask = Clima[[1]])
+    OccBuffer<- terra::aggregate(OccBuffer) #Merge buffer objects into 
+
+    OccBufferRas <-terra::rasterize(x = OccBuffer, y=Clima) #snap to Clima grid
+    OccBufferRas <-raster::mask(x = OccBufferRas, mask = Clima[[1]]) #Mask to remove oceanic points within the buffer. 
     
     ##Selecting the potential pseudo absence sites
     AllPseudo <- terra::as.points(OccBufferRas)
@@ -758,11 +870,10 @@ trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(
     
     #Now, train a Maxent model
     Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2]) #bind into 4 cols; left is real, right is associated psuedo
-    colnames(Occurrences)<-c('Long','Lat','x','y')
+    colnames(Occurrences)<-c('Long','Lat','Long_Psuedo','Lat_Psuedo')
     
-
-    id.training<-sample(1:nrow(Occurrences),round(split*nrow(Occurrences),0)) #create test-train split (split=percent train)
-    training<-dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("x", "y")])  #Use dismo prepare data to set up df
+    id.training<-sample(1:nrow(Occurrences), round(split*nrow(Occurrences),0)) #create test-train split (split=percent train)
+    training <- dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("Long_Psuedo", "Lat_Psuedo")])  #Use dismo prepare data to set up df
     testing<-dismo::prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
     training<-na.omit(training)
     testing<-na.omit(testing)
@@ -790,35 +901,18 @@ trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(
 Perform a PCA on our environmental data to grab some predictors
 ```{r}
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
-tet$cells <- terra::cellFromXY(object= Clima[[1]], xy = tet[,5:4])
+vals <- as.data.frame(Clima, na.rm = TRUE)
+pca <- prcomp(vals, center = TRUE, scale = TRUE)
 
-indcells_tet <- dplyr::group_by(tet, species, cells) %>% dplyr::slice_sample(n = 1)
+Clima_pca <- terra::predict(
+  Clima,
+  pca,
+  index = 1:4,
+  filename = "Clima_PCA_1to4.tif",
+  overwrite = TRUE
+)
 
-OccSf <-sf::st_as_sf(x=tet[1:1000,5:4], coords = c("decimalLongitude",'decimalLatitude'), 
-                        crs=sp::CRS("EPSG:4326")) #crs=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
-
-points_proj <- sf::st_transform(OccSf, crs = "+proj=moll")
-
-# Create 200 km buffers (buffer distance in meters)
-buffers <- sf::st_buffer(points_proj, dist = 200000)
-
-OccBuffer <-sf::st_union(buffers) #Merge buffer objects into one
-
-
-plot(Clima[[1]])
-polygon(buffers)
-
-points(points_proj, pch=16)
-
-
-OccSf <-sf::st_as_sf(x=indcells_tet[,5:4], coords = c("decimalLongitude",'decimalLatitude'), 
-                        crs=sp::CRS("ESRI:54009")) #Using an equal-distance projection
-
-OccBuffer <-sf::st_buffer(OccSf, dist=2) #Create buffer objects with 2deg (~200km) buffers
-
-plot(OccBuffer)
-plot(Clima[[1]])
-points(OccSf)
+names(Clima_pca) <- paste0("PC", 1:nlyr(Clima_pca))
 ```
 
 
