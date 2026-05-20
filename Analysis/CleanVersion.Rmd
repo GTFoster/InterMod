@@ -77,14 +77,14 @@ Plant-Pollinator networks queried from Web of Life
 
 Querying the web of life API. 
 Tutorial for how to do this found here: https://www.web-of-life.es/tutorial/session-download-data.html
-```{r, eval=F}
+```{r}
 # define the base url
 base_url <- "https://www.web-of-life.es/"   
 json_url2 <- paste0(base_url,"get_networks.php?interaction_type=Pollination") 
 
 WolPols <- jsonlite::fromJSON(json_url2)
 WolMeta <- read.csv(paste0(base_url,"get_network_info.php")) %>%dplyr::filter(., network_type%in%"Pollination")
-length(unique(WolPols$network_name)) # 174 Networks
+#length(unique(WolPols$network_name)) # 174 Networks
 ```
 
 Downloading the metaData on Wol data so that we have geometries
@@ -170,20 +170,15 @@ load(file="data/interactionWebs.RDA")
 
 Grabbing taxonkeys from rgbif to more easily interface with gbifdb
 ```{r}
-taxa <- rgbif::name_backbone_checklist(unique(dat$Animal_Species, dat$Plant_Species))
+taxa <- rgbif::name_backbone_checklist(unique(c(dat$Animal_Species, dat$Plant_Species)))
 #Searched term is in verbatim_name column
 taxa_safe <- dplyr::filter(taxa, is.na(speciesKey)==F)
-write.csv(taxa_safe, file="backbone_matches.csv", row.names=FALSE)
-```
-
-
-
-Grabbing occurence points
-```{r, eval=FALSE}
-gbif <- gbif_local(dir='../../../GBIF_local/occurrence/2024-04-01') #Tell R where to find our local GBIF copy
+#write.csv(taxa_safe, file="backbone_matches.csv", row.names=FALSE) #We use this output in GBIFdb_Querying.R to grab occurence points
 ```
 
 # Quantifying interaction specialism
+
+## Looking at Plant Traits (Floral Visitor Specialism)
 ```{r}
 FrugPartners <- dplyr::filter(Moulatletval, Frugivore_Species %in% dat$Animal_Species) #All interactions with the focal frugivore species
 PollPartners <- dplyr::filter(WolPols, species2 %in% dat$Animal_Species) #All interactions with the focal pollinator species
@@ -193,21 +188,18 @@ trait_vector <- c("leaf area", "maximum fruit length", "maximum whole plant heig
 plants <- unique(FrugPartners$Plant_Species, WolPols$species1)
 plants <- plants[grepl("\\d", plants)==FALSE]
 
-save(plants, file="BIENstuff.Rda")
+#save(plants, file="BIENstuff.Rda")
 ```
 
 Query those plants in BIEN
 ```{r}
-plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running this all at once, so I split the query into 4 files of ~1k-1.5K each  
-
+#plant_traits <- BIEN::BIEN_trait_species(species=plants) #I had trouble running this all at once, so I split the query into 4 files of ~1k-1.5K each  
 #write.csv(plant_traits, file="data/traits/plant_traits5K.csv", row.names = F)
-
 BIENSP <- BIEN::BIEN_list_all()
 
 pmatches <- plants[plants %in% BIENSP$species]
 ```
 Loading in those plant traits and taking species-level averages
-
 
 ```{r}
 dat1 <- read.csv(file="data/traits/plant_traits1K.csv")
@@ -271,37 +263,467 @@ head(GIFT_Traits)
 
 GIFT_Traits <- dplyr::filter(GIFT_Traits, work_species %in% plants)
 ```
-So Gift adds some measures and ~156 new species, but all in all not that many. Let's check try
+
+So Gift adds some measures and ~156 new species, but all in all not that many. Let's check the TRY database
+https://www.try-db.org/TryWeb/Home.php
+```{r}
+library(rtry)
+TRY <- rtry_import("data/TRYQuery_InterMod.txt")
+TRY <- rtry::rtry_remove_dup(TRY)
+TRY <- dplyr::filter(TRY, is.na(TraitID)==FALSE) #If missing, really mostly a random collection of measurements.
+
+contTRY <- dplyr::filter(TRY, TraitID %in% c(26, 3106, 3117, 27, 918, 18))
+
+contTRYsummary <- contTRY %>%
+  dplyr::filter(., is.na(UnitName)==F) %>%
+  dplyr::group_by(TraitName, TraitID, AccSpeciesName, UnitName) %>% 
+  dplyr::summarise(., meanMeasure=mean(StdValue, na.rm=T), nmeasures=n())
+
+qualTry <- dplyr::filter(TRY, TraitID %in%  c(59,207,585))
+
+x <- dplyr::filter(qualTry, TraitID==207)
+#write.csv(contTRYsummary, file="contTRYsummary.csv", row.names = F)
+#write.csv(qualTry, file="qualTry.csv", row.names = F)
+```
+
+Loading in our intermediates
+```{r}
+contTRYsummary <- read.csv(file="contTRYsummary.csv")
+qualTry <- read.csv(file="qualTry.csv")
+```
+
+Parsing Flower Color Strings
+```{r}
+fwrClr <- dplyr::filter(qualTry, TraitID==207)
+fwrClr <- dplyr::filter(fwrClr, OrigValueStr %in% names(table(fwrClr$OrigValueStr)[table(fwrClr$OrigValueStr)>5])) #Keep only colors with at least 5 records (minimizing my string manipulation when I can)
+
+fwrClr <- dplyr::filter(fwrClr, OrigValueStr != "/" ) #Slash
+
+#Colormap initially created with help of chatgpt, but spotchecked with google translate to ensure accurate translations
+flower_color_map_simple <- c(
+  # Blue
+  "blue" = "blue",
+  "Blue" = "blue",
+  "blau" = "blue",
+  "dunkelblau" = "blue",
+  "hellblau" = "blue",
+  "hellblau, Schlund gelb" = "multicolored",
+
+  # Brown
+  "brown" = "brown",
+  "Brown" = "brown",
+  "bräunlich" = "brown",
+
+  # Yellow
+  "yellow" = "yellow",
+  "Yellow" = "yellow",
+  "gelb" = "yellow",
+  "gelblich" = "yellow",
+  "hellgelb" = "yellow",
+  "goldgelb" = "yellow",
+  "grünlichgelb" = "yellow",
+  "blassgelb" = "yellow",
+  "sattgelb" = "yellow",
+  "schwefelgelb" = "yellow",
+  "zitronengelb" = "yellow",
+  "goldgelb, glänzend" = "yellow",
+  "amarillo" = "yellow",
+
+  # Green
+  "green" = "green",
+  "Green" = "green",
+  "grün" = "green",
+  "hellgrün" = "green",
+  "grünlich" = "green",
+  "gelblichgrün" = "green",
+  "gelb, grün" = "green",
+  "gelbgrün" = "green",
+  "green, yellow" = "green",
+  "verde" = "green",
+
+  # Orange
+  "orange" = "orange",
+  "Orange" = "orange",
+
+  # Purple, including violet terms
+  "purple" = "purple",
+  "Purple" = "purple",
+  "purpurn" = "purple",
+  "hellpurpurn" = "purple",
+  "morado" = "purple",
+  "violet" = "purple",
+  "violett" = "purple",
+  "hellviolett" = "purple",
+  "lila" = "purple",
+  "blauviolett" = "purple",
+  "rotviolett" = "purple",
+
+  # Red
+  "red" = "red",
+  "Red" = "red",
+  "rot" = "red",
+  "purpurrot" = "red",
+  "rosenrot" = "red",
+  "rosarot" = "red",
+  "rojo" = "red",
+
+  # Pink
+  "pink" = "pink",
+  "rosa" = "pink",
+  "hellrosa" = "pink",
+  "blassrosa" = "pink",
+  "blass rosa" = "pink",
+  "lebhaft rosa" = "pink",
+  "rosado" = "pink",
+  "rosa bis weiß" = "pink",
+  "blass rosa bis fast weiß" = "pink",
+  "weiß bis blassrosa" = "pink",
+  "weiß bis hellrosa" = "pink",
+  "weiß oder rosa" = "pink",
+  "weiß bis rosa" = "pink",
+  "weiß bis blass rosa" = "pink",
+
+  # White
+  "white" = "white",
+  "White" = "white",
+  "weiß" = "white",
+  "weißlich" = "white",
+  "grünlichweiß" = "white",
+  "rötlichweiß" = "white",
+  "gelblichweiß" = "white",
+  "blanco" = "white",
+
+  # Remaining compounds simplified to multicolored
+  "weiß und gelb" = "multicolored",
+  "weiß, am Grund gelb" = "multicolored",
+  "weiß oder rötlich" = "multicolored",
+  "pink, purple" = "multicolored",
+
+  # Non-color / variable categories
+  "various colors" = "variable",
+  "sin flor" = "no_flower"
+)
+
+fwrClr$FlowerColor_simple <- unname(
+  flower_color_map_simple[fwrClr$OrigValueStr] #map our flower color strings to our simplified mapping
+)
+
+fwrClr_Final <- dplyr::select(fwrClr, AccSpeciesName, FlowerColor_simple) %>% 
+  unique() %>%
+  mutate(value = 1) %>% #to grab positive for pivot_wider
+    pivot_wider(
+    names_from = FlowerColor_simple,
+    values_from = value,
+    values_fill = 0,
+    names_prefix = "flower_"
+)
+```
+
+Parsing Fruit/Seed Color Strings
+```{r}
+fruitClr <- dplyr::filter(qualTry, TraitID==585)
+fruitClr <- dplyr::filter(fruitClr, OrigValueStr %in% names(table(fruitClr$OrigValueStr)[table(fruitClr$OrigValueStr)>5])) #Keep only colors with at least 5 records (minimizing my string manipulation when I can)
+
+#again, colormap initially created with help of chatgpt, but spotchecked with google translate to ensure accurate translations
+fruit_seed_color_map <- c(
+  # Black
+  "Black" = "black",
+  "black" = "black",
+
+  # Blue
+  "Blue" = "blue",
+
+  # Brown
+  "Brown" = "brown",
+  "brown" = "brown",
+  "brownish" = "brown",
+  "dark brown" = "brown",
+  "pale brown" = "brown",
+  "reddish brown" = "brown",
+  "yellowish brown" = "brown",
+
+  # Green
+  "Green" = "green",
+  "green" = "green",
+  "greenish" = "green",
+  "dark green" = "green",
+  "green?" = "green",
+  "yellowish green" = "green",
+
+  # Orange
+  "Orange" = "orange",
+  "orange" = "orange",
+  "orange-red" = "orange",
+  "orange-brown" = "orange",
+
+  # Pink
+  "pink" = "pink",
+
+  # Purple
+  "Purple" = "purple",
+  "purple" = "purple",
+
+  # Red
+  "Red" = "red",
+  "red" = "red",
+  "reddish" = "red",
+  "bright red" = "red",
+  "dark red" = "red",
+  "young fruits pale almost white; turning bright red at maturity; and then brown with age" = "red",
+
+
+  # White
+  "White" = "white",
+  "white" = "white",
+  "whitish" = "white",
+  "ivory" = "white",
+  "white / cream" = "white",
+  "beige" = "white",
+
+  # Yellow
+  "Yellow" = "yellow",
+  "yellow" = "yellow",
+  "yellowish" = "yellow",
+  "straw-coloured" = "yellow",
+
+  # Multicolored or variable
+  "brown; black" = "multicolored",
+  "yellow to orange" = "multicolored",
+  "yellow; orange" = "multicolored",
+  "orange; red" = "multicolored",
+  "red; orange" = "multicolored",
+  "orange to red" = "multicolored",
+  "yellow; orange; red" = "multicolored",
+  "red; black" = "multicolored",
+  "yellow; red" = "multicolored",
+  "green; red" = "multicolored",
+  "pink; red" = "multicolored",
+  "green; black" = "multicolored",
+  "green; brown" = "multicolored",
+  "white; red" = "multicolored",
+  "red; brown" = "multicolored",
+  "yellow; brown" = "multicolored",
+  "orange; yellow" = "multicolored",
+  "orange or red" = "multicolored",
+  "purple-black" = "multicolored",
+  "purple; black" = "multicolored",
+  "black; purple" = "multicolored",
+  "brown; yellow" = "multicolored",
+  "orange; brown" = "multicolored",
+  "green to red" = "multicolored",
+  "purplish-black" = "multicolored",
+  "black-purple" = "multicolored",
+  "blue; black" = "multicolored",
+  "brown to black" = "multicolored",
+  "purple / black" = "multicolored",
+  "brown/red" = "multicolored"
+)
+
+fruitClr$FruitSeedColor_simple <- unname(
+  fruit_seed_color_map[fruitClr$OrigValueStr]
+)
+
+fruitClr <- fruitClr %>% #Collect species that have multiple entries for each color option
+  dplyr::group_by(AccSpeciesName, FruitSeedColor_simple) %>%
+  dplyr::summarise(Nvotes=n()) %>% 
+  ungroup()
+
+fruitClr_final <- fruitClr %>%
+  group_by(AccSpeciesName) %>%
+  arrange(desc(Nvotes), .by_group = TRUE) %>% #ORder by votes to take slice of most voted
+  slice(1) 
+```
+
+Parsing lifespan estimates
+```{r}
+plantAge <- dplyr::filter(qualTry, TraitID==59)
+
+#Again, making use of ChatGPT to create a string mapping function
+map_lifespan <- function(x) {
+  original <- x
+  x <- trimws(tolower(as.character(x)))
+
+  # Normalize obvious punctuation/spacing
+  x <- gsub("\\s+", " ", x)
+  x <- gsub("–|—", "-", x)
+
+  out <- rep(NA_character_, length(x))
+
+  # Empty / unknown-ish values
+  out[is.na(original) | x == "" |
+        x %in% c("unknown", "always questionable", "nope", "no", "yes")] <- "unknown"
+
+  # Explicit non-perennial coded in as annuals (assumption)
+  out[is.na(out) & x %in% c("not perennial", "perennial or not")] <- "annual"
+
+  # Abbreviations and clear annuals
+  annual_pat <- paste(
+    c(
+      "\\bannual\\b", "\\bannuals\\b",
+      "\\bsummer annual\\b", "\\bsummer annuals\\b",
+      "\\bwinter annual\\b", "\\bwinter annuals\\b",
+      "\\bannuel\\b", "\\banual\\b", "\\bann\\b",
+      "\\bsa\\b", "\\bwa\\b",
+      "\\bephemeral\\b"
+    ),
+    collapse = "|"
+  )
+
+  # Clear biennials and misspellings
+  biennial_pat <- paste(
+    c(
+      "\\bbiennial\\b", "\\bbiennials\\b",
+      "\\bbiannual\\b", "\\bbisannual\\b", "\\bbiasannual\\b",
+      "\\bbennial\\b", "\\bbieenial\\b", "\\bbiennual\\b",
+      "\\bbi-annuals\\b"
+    ),
+    collapse = "|"
+  )
+
+  # Perennial terms and misspellings
+  perennial_pat <- paste(
+    c(
+      "\\bperennial\\b", "\\bperennials\\b",
+      "\\bpere\\b", "\\bper\\b", "\\bpereenial\\b", "\\bpernnial\\b",
+      "\\bperennil\\b", "\\bwoody\\b", "\\btree\\b", "\\bshrub\\b",
+      "\\bgeophytes\\b", "\\bhemicryptophytes\\b",
+      "\\bperennial rootstock\\b",
+      "\\bpluriennial\\b", "\\bpoly-annuals\\b",
+      "\\bpolycarpic perennial\\b", "\\bmonocarpic perennial\\b",
+      "\\bevergreen\\b"
+    ),
+    collapse = "|"
+  )
+
+  # Textual perennial duration classes
+  out[is.na(out) & grepl("short-lived|short lived|shortperennial|short perennial|short-lived pp", x)] <- "perennial_lt5"
+  out[is.na(out) & grepl("medium-lived|medium lived|moderate", x)] <- "perennial_5_50"
+  out[is.na(out) & grepl("long-lived|long lived|\\blong\\b", x)] <- "perennial_50_plus"
+
+  # Explicit poly-annual categories
+  out[is.na(out) & grepl("poly-annuals.*5-50|5-50 years", x)] <- "perennial_5_50"
+  out[is.na(out) & grepl("poly-annuals.*50 years|50 years.*long-lived", x)] <- "perennial_50_plus"
+  out[is.na(out) & grepl("poly-annuals.*5 years|5 years.*short-lived", x)] <- "perennial_5_50"
+
+  # If mixed annual/biennial/perennial, shortest option wins.
+  # Annual has priority over biennial and perennial.
+  out[is.na(out) & grepl(annual_pat, x)] <- "annual"
+
+  # Biennial has priority over perennial, but only after annual has been checked.
+  out[is.na(out) & grepl(biennial_pat, x)] <- "biennial"
+
+  # Perennial-only text with no lifespan info
+  out[is.na(out) & grepl(perennial_pat, x)] <- "perennial_unspecified"
+
+  # Explicit inequality rules before generic numeric parsing
+  out[is.na(out) & grepl("^>\\s*1\\s*years?$", x)] <- "perennial_unspecified"
+  out[is.na(out) & grepl("^>\\s*2\\s*years?$", x)] <- "perennial_lt5"
+  out[is.na(out) & grepl("^<\\s*5\\s*years?$", x)] <- "perennial_lt5"
+  out[is.na(out) & grepl(">\\s*50\\s*years?", x)] <- "perennial_50_plus"
+    out[is.na(out) & grepl("<\\s*5\\s*years?", x) & grepl("perennial|poly-annuals", x)] <- "perennial_lt5"
+  
+  # Numeric parser.
+  # Rule:
+  #   1 year or less -> annual
+  #   >1 to <=2 years -> biennial
+  #   >2 to <5 years -> perennial_lt5
+  #   >=5 to <50 years -> perennial_5_50
+  #   >=50 years -> perennial_50_plus
+  #
+  # For ranges or multiple values, use the minimum number, following your shorter-option rule.
+  needs_numeric <- is.na(out)
+
+  extract_min_number <- function(s) {
+    nums <- regmatches(s, gregexpr("\\d+\\.?\\d*", s))[[1]]
+    nums <- suppressWarnings(as.numeric(nums))
+    nums <- nums[!is.na(nums)]
+    if (length(nums) == 0) return(NA_real_)
+    min(nums)
+  }
+
+  min_years <- rep(NA_real_, length(x))
+  min_years[needs_numeric] <- vapply(x[needs_numeric], extract_min_number, numeric(1))
+
+  out[is.na(out) & !is.na(min_years) & min_years <= 1] <- "annual"
+  out[is.na(out) & !is.na(min_years) & min_years > 1 & min_years <= 2] <- "biennial"
+  out[is.na(out) & !is.na(min_years) & min_years > 2 & min_years < 5] <- "perennial_lt5"
+  out[is.na(out) & !is.na(min_years) & min_years >= 5 & min_years < 50] <- "perennial_5_50"
+  out[is.na(out) & !is.na(min_years) & min_years >= 50] <- "perennial_50_plus"
+
+  # Anything still unmapped
+  out[is.na(out)] <- "unknown"
+
+  out
+}
+
+plantAge$LifeSpan_simple <- map_lifespan(plantAge$OrigValueStr) #apply our mapping function to our plantAge dataset
+```
+
+```{r}
+plantAge <- plantAge %>%
+  dplyr::group_by(AccSpeciesName, LifeSpan_simple) %>%
+  dplyr::summarise(Nvotes=n()) %>% 
+  ungroup()
+
+plantAge <- dplyr::filter(plantAge, LifeSpan_simple != "unknown") #remove unkowns
+
+#In the case of a tie, we assign heirarchy to our lifespan options, choosing shortest available
+lifespan_order <- c(
+  "annual",
+  "biennial",
+  "perennial_lt5",
+  "perennial_5_50",
+  "perennial_50_plus",
+  "perennial_unspecified"
+)
+
+plantAge_final <- plantAge %>%
+  mutate(
+    LifeSpan_rank = match(LifeSpan_simple, lifespan_order)
+  ) %>%
+  group_by(AccSpeciesName) %>%
+  arrange(desc(Nvotes), LifeSpan_rank, .by_group = TRUE) %>% #First order by votes, then lifespan rank
+  slice(1) %>% #Take the first entry after our arrange
+  ungroup() %>%
+  select(AccSpeciesName, LifeSpan_simple, Nvotes)
+```
+
+Putting the TryData in one place
+```{r}
+qualTry_summary <- plantAge_final %>% dplyr::select(., -Nvotes) %>%
+  full_join(., dplyr::select(fruitClr_final, -Nvotes), by = join_by(AccSpeciesName)) %>% #join fruit color
+  full_join(., fwrClr_Final, by= join_by(AccSpeciesName)) #join flower color
+
+traitname_map <- c("Fruit length"="fruit_length_mm",
+  "Leaf area per leaf dry mass (specific leaf area, SLA or 1/LMA): undefined if petiole is in- or excluded"="SLA_mm2/mg",
+  "Plant height"="plant_height_m",
+  "Plant height vegetative"="plant_height_vegetative_m",
+  "Seed dry mass"="seed_mass_mg",
+  "Seed length"="seed_length_mm")
+
+contTRYsummary <- dplyr::filter(contTRYsummary, is.na(meanMeasure)==F) %>%
+  dplyr::filter(., is.na(TraitName)==F) 
+
+contTRYsummary$TraitName <- unname(
+  traitname_map[contTRYsummary$TraitName] #msimplify column names before pivoting
+)
+
+contTRYsummary <- contTRYsummary %>% 
+  dplyr::select(., AccSpeciesName, TraitName, meanMeasure) %>%
+  pivot_wider(., id_cols=AccSpeciesName, names_from=TraitName, values_from = meanMeasure)
+
+Trysummary <- full_join(qualTry_summary, contTRYsummary, by=join_by(AccSpeciesName))
+```
 
 
 ```{r}
 focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
 ```
 
-
-# Querying GBIF occurence points
-
-We did some querying on another machine; let's see what data we've got
-```{r}
-toquery <- unique(c(dat$Animal_Species, dat$Plant_Species))
-save(toquery, file="GBIFdb_query.RDA")
-
-#tet <- read.csv(file="data/composite_occs.csv")
-#tet <- dplyr::filter(tet, species %in% toquery)
-
-#missing <- toquery[toquery %in% tet$species==F]
-missing[missing=="Sphaerophoria macrogaster "] <- "Sphaerophoria macrogaster"
-#save(missing, file="missingtoQuery.RDA")
-```
-
-Quantifying range overlap
-
-```{r}
-overlap <- dplyr::select(dat, speciesPair, Animal_Species, Plant_Species) %>% unique()
-
-gsub(" ","_",paste("MaxentModels2/Maxent_test", tolower(dat$Animal_Species[3])))
-```
-
+## Looking at Animal Traits (Plant Specialism)
+This is something we can revisit down the line if we want, but we're somewhat data limited right now. For now, we'll focus on plant traits, as the active choice of who to interact with is being made by the animal anyways, so specialism-generalism seems bit more relevant from that side. 
+Pollinator Traits
+Frugivore Traits (AvoNet)
 
 # Creating SDMS
 
