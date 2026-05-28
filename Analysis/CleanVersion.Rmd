@@ -901,14 +901,15 @@ trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(
 Perform a PCA on our environmental data to grab some predictors
 ```{r}
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
+Clima <- terra::crop(Clima, ext(-180, 180, -66.563, 66.563)) #Excluding the artic circle. No points up there, and we can hopefully get a better characterization of the remaining climatic variation
 vals <- as.data.frame(Clima, na.rm = TRUE)
 pca <- prcomp(vals, center = TRUE, scale = TRUE)
 
 Clima_pca <- terra::predict(
   Clima,
   pca,
-  index = 1:4,
-  filename = "Clima_PCA_1to4.tif",
+  index = 1:8,
+  filename = "Clima_PCA_1to8.tif",
   overwrite = TRUE
 )
 
