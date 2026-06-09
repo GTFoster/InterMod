@@ -40,51 +40,54 @@ idex <- c(seq(1, nrow(keyquery)))
 #  dplyr::arrange(n) #start with smallest first and go up from there
 
 #for(j in idex[-length(idex)]){
-for(j in idex){
-  #keystemp <- keyquery$key[(j+1):(j+5)]
-  keystemp <- keyquery$key[j]
-  Sys.time()
-    spdat <- gbif |> 
-      #filter(taxonkey %in% key) |> 
-      filter(taxonkey %in% keystemp) |> 
-      collect() #Grab all occurence records for the species of interest and call is spdat, using our backbone key to search
+for(p in panels){
+  for(j in idex){
+    #keystemp <- keyquery$key[(j+1):(j+5)]
+    keystemp <- keyquery$key[j]
     Sys.time()
-    outrun <- spdat
-    spdat <- dplyr::filter(spdat, is.na(decimallongitude)==F) #remove recs without latlong
-    
-    spdat <- spdat %>% #Do some data cleaning
-        dplyr::filter(occurrencestatus  == "PRESENT") %>%
-        dplyr::filter(!basisofrecord %in% c("FOSSIL_SPECIMEN")) %>% #Remove fossils
-        CoordinateCleaner::cc_cen( #Remove records within 1km buffer of country centroids
-        lon = "decimallongitude", 
-        lat = "decimallatitude", 
-        buffer = 1000, # radius of circle around centroid to look for centroids
-        value = "clean",
-        test="both")  %>% 
-        cc_sea( #Remove oceanic records
-      lon = "decimallongitude",
-      lat = "decimallatitude"
-      )# %>%
-      #dplyr::filter(., establishmentMeans != "introduced") #Remove known introduced  spp
-    
-    occs <- dplyr::select(spdat, genus, species,scientificname, decimallatitude, decimallongitude, elevation, day, month, year, taxonkey) %>% unique() 
-    #subset across species and save into seperate files
-    
-    #for(i in (j+1):(j+5)){
-    for(i in j){
-      filname <- keyquery$name[i] %>% tolower() %>% gsub(pattern=" ", replacement="_",.) %>%
-      paste("data/GBIF/occs/", ., ".csv", sep="") #Create a filename
-      tempocc <- dplyr::filter(occs, taxonkey==keyquery$key[i])
-      write.csv(tempocc, file=filname, row.names = FALSE) 
-      IDkey <- matches$verbatim_index[matches$verbatim_name==keyquery$name[i]]
-      if(length(IDkey)==0){
-        IDkey <- NA
+      spdat <- gbif |> 
+        #filter(taxonkey %in% key) |> 
+        filter(taxonkey %in% keystemp) |> 
+        filter(decimallatitude > 0 & decimallongitude > 0) |>
+        collect() #Grab all occurence records for the species of interest and call is spdat, using our backbone key to search
+      Sys.time()
+      outrun <- spdat
+      spdat <- dplyr::filter(spdat, is.na(decimallongitude)==F) #remove recs without latlong
+      
+      spdat <- spdat %>% #Do some data cleaning
+          dplyr::filter(occurrencestatus  == "PRESENT") %>%
+          dplyr::filter(!basisofrecord %in% c("FOSSIL_SPECIMEN")) %>% #Remove fossils
+          CoordinateCleaner::cc_cen( #Remove records within 1km buffer of country centroids
+          lon = "decimallongitude", 
+          lat = "decimallatitude", 
+          buffer = 1000, # radius of circle around centroid to look for centroids
+          value = "clean",
+          test="both")  %>% 
+          cc_sea( #Remove oceanic records
+        lon = "decimallongitude",
+        lat = "decimallatitude"
+        )# %>%
+        #dplyr::filter(., establishmentMeans != "introduced") #Remove known introduced  spp
+      
+      occs <- dplyr::select(spdat, genus, species,scientificname, decimallatitude, decimallongitude, elevation, day, month, year, taxonkey) %>% unique() 
+      #subset across species and save into seperate files
+      
+      #for(i in (j+1):(j+5)){
+      for(i in j){
+        filname <- keyquery$name[i] %>% tolower() %>% gsub(pattern=" ", replacement="_",.) %>%
+        paste("data/GBIF/occs/", ., ".csv", sep="") #Create a filename
+        tempocc <- dplyr::filter(occs, taxonkey==keyquery$key[i])
+        write.csv(tempocc, file=filname, row.names = FALSE) 
+        IDkey <- matches$verbatim_index[matches$verbatim_name==keyquery$name[i]]
+        if(length(IDkey)==0){
+          IDkey <- NA
+        }
+        tempcheck <- data.frame(Name=keyquery$name[i], ID=IDkey, NROW=try(nrow(tempocc)), time=Sys.time())
       }
-      tempcheck <- data.frame(Name=keyquery$name[i], ID=IDkey, NROW=try(nrow(tempocc)), time=Sys.time())
-    }
-    print(paste("done with", j, sep=" "))
-    nmlist <- rbind(nmlist, tempcheck)
-    rm(occs, tempocc)
-    gc()
-    write.csv(nmlist, file="Progresscheck_birds_big.csv")
+      print(paste("done with", j, sep=" "))
+      nmlist <- rbind(nmlist, tempcheck)
+      rm(occs, tempocc)
+      gc()
+      write.csv(nmlist, file="Progresscheck_birds_big.csv")
+  }
 }
