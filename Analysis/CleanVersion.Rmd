@@ -5,14 +5,18 @@ date: "2024-10-04"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 ```{r}
+options(java.parameters = "-Xmx20g") #Java Heap Space Limits for Maxent
+library(rJava)
 library(tidyverse)
 library(GIFT)
 library(terra)
+library(dismo)
+library(predicts)
+library(picante)
+library(ape)
+library(phytools)
+library(stringr)
 ```
 
 
@@ -97,7 +101,9 @@ WolMeta <- WolMeta %>% dplyr::select(., network_name, region, latitude, longitud
 
 ```{r, eval=F}
 WolMeta <- WolMeta %>% 
-    mutate(ID = group_indices(WolMeta, .dots=c("latitude", "longitude"))) #Some networks are grouped across time but are at the same site-I'm adding a grouping column for those here. 
+  group_by(latitude, longitude) %>%
+  mutate(ID = cur_group_id()) %>%
+  ungroup() #Some networks are grouped across time but are at the same site-I'm adding a grouping column for those here. 
 
 Wolsumm <- dplyr::select(WolMeta, ID, longitude, latitude, species1, species2) %>% unique() %>%#Grab uniques
   dplyr::rename(., Plant_Species=species1, Pollinator_Species=species2)
@@ -127,9 +133,8 @@ pol2 <- pol2 %>% dplyr::group_by(., speciesPair, longitude, latitude) %>% dplyr:
 
 pol2 <- dplyr::select(pol2, -ID) %>% unique() #remove any redundant sites
 
-
 pol2 <- group_by(pol2, speciesPair) %>% #group by this
-  dplyr::mutate(., pos=sum(interaction), tot=n(), neg=tot-pos)#count the number of positive and negative interaction presences across the Moulatletval data
+  dplyr::mutate(., pos=sum(interaction), tot=n(), neg=tot-pos)#count the number of positive and negative interaction presences across the pollinator data
 
 pol2$prop <- pol2$pos/pol2$tot #create a proportion column
 
@@ -188,8 +193,6 @@ taxa_safe <- dplyr::filter(taxa, is.na(speciesKey)==F)
 ```
 
 # Quantifying interaction specialism
-
-## Looking at Plant Traits (Floral Visitor Specialism)
 ```{r}
 FrugPartners <- dplyr::filter(Moulatletval, Frugivore_Species %in% dat$Animal_Species) #All interactions with the focal frugivore species
 PollPartners <- dplyr::filter(WolPols, species2 %in% dat$Animal_Species) #All interactions with the focal pollinator species
@@ -198,9 +201,21 @@ trait_vector <- c("leaf area", "maximum fruit length", "maximum whole plant heig
 
 plants <- unique(FrugPartners$Plant_Species, WolPols$species1)
 plants <- plants[grepl("\\d", plants)==FALSE]
-
 #save(plants, file="BIENstuff.Rda")
 ```
+
+Basis specificity (# of interactions)
+```{r}
+FrugSpecificity <- FrugPartners %>% dplyr::filter(., interaction==1) %>%
+  dplyr::group_by(Frugivore_Species) %>%
+  dplyr::summarise(nInteractions=length(unique(Plant_Species)))
+
+PollSpecificity <- PollPartners %>%
+  dplyr::group_by(species2) %>%
+  dplyr::summarise(nInteractions=length(unique(species1)))
+```
+
+## Looking at Plant Traits (Floral Visitor Specialism)
 
 Query those plants in BIEN
 ```{r}
@@ -783,7 +798,7 @@ plantAge_final <- plantAge %>%
   arrange(desc(Nvotes), LifeSpan_rank, .by_group = TRUE) %>% #First order by votes, then lifespan rank
   slice(1) %>% #Take the first entry after our arrange
   ungroup() %>%
-  select(AccSpeciesName, LifeSpan_simple, Nvotes)
+  dplyr::select(AccSpeciesName, LifeSpan_simple, Nvotes)
 ```
 
 Putting the TryData in one place
@@ -815,12 +830,116 @@ Trysummary <- full_join(qualTry_summary, contTRYsummary, by=join_by(AccSpeciesNa
 
 Combining our data into one trait set
 ```{r}
-PTraits <- full_join(BIENsum, Trysummary) #NEED to join such that each species has a unique entry; do so!
+bien_cols <- setdiff(names(BIENsum), "AccSpeciesName")
+try_cols  <- setdiff(names(Trysummary), "AccSpeciesName")
+
+shared_cols <- intersect(bien_cols, try_cols)
+bien_only   <- setdiff(bien_cols, shared_cols)
+try_only    <- setdiff(try_cols, shared_cols)
+
+PTraits <- full_join(
+  BIENsum,
+  Trysummary,
+  by = "AccSpeciesName",
+  suffix = c("_BIEN", "_TRY")
+)
+
+for (col in shared_cols) {
+  PTraits[[col]] <- coalesce(
+    PTraits[[paste0(col, "_BIEN")]],
+    PTraits[[paste0(col, "_TRY")]]
+  )
+}
+
+PTraits <- PTraits %>%
+  dplyr::select(
+    AccSpeciesName,
+    all_of(shared_cols),
+    all_of(bien_only),
+    all_of(try_only)
+  )
 ```
+
 
 ```{r}
 focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
 ```
+
+Determining Phylogenetic specificity of animal pollinators/dispersers
+
+START HERE: ADDING POLYTOMIES
+Fruiting Plants
+```{r}
+FrugPartners$Plant_Species[FrugPartners$Plant_Species=="Garcinia king\xe4ensis"] <- "Garcinia kingaensis"
+
+FrugPartners$Plant_Species
+FrugPartners$genera <- word(FrugPartners$Plant_Species, 1, 1)
+FrugPartners$sp <- word(FrugPartners$Plant_Species, 2, 2)
+
+BIEN_tree <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 1, seed=1, replicates = 10)
+
+
+FrugPlants <- FrugPartners %>%
+  filter(!str_detect(sp, "\\d")) %>% 
+  dplyr::select(., Plant_Species, genera, sp) %>% 
+  unique()
+
+#hist(node.depth.edgelength(BIEN_tree)[seq_len(Ntip(BIEN_tree))]) #Tree is ultrametric, but just doesn't seem due to rounding errors. 
+#BIEN_tree <- force.ultrametric(BIEN_tree) #My big tree is too big to apply this to
+
+#table(tolower(unique(FrugPlants$genera)) %in% BIEN_genera) #Out of 828 genera in our dataset, 503 have a congeneric match in the BIEN tree.
+BIEN_plantkeep <- data.frame(tip=BIEN_tree$tip.label)
+BIEN_plantkeep$genera <- BIEN_plantkeep$tip %>% 
+  gsub("_"," ",.) %>%
+  word(., 1,1) %>%
+  tolower()
+
+BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(FrugPlants$genera))) #Filtering out all species without congenerics in our frugivore dataset
+
+FrugPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
+#FrugPlant_tree <- force.ultrametric(FrugPlant_tree)
+```
+
+Flowering Plants
+```{r}
+PollPartners <- PollPartners %>% dplyr::rename(.,"Plant_Species"=species1, "visitor"=species2)
+PollPartners$genera <- word(PollPartners$Plant_Species, 1, 1) %>% tolower()
+BIEN_plantkeep <- data.frame(tip=BIEN_tree$tip.label)
+BIEN_plantkeep$genera <- BIEN_plantkeep$tip %>% 
+  gsub("_"," ",.) %>%
+  word(., 1,1) %>%
+  tolower()
+
+BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(PollPartners$genera))) #Filtering out all species without congenerics in our frugivore dataset
+PollPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
+#save(FrugPlant_tree, PollPlant_tree, file="nonRoundedTrees.RDA")
+```
+
+```{r}
+load(file="Ult_trees.RDA")
+```
+
+
+
+```{r}
+dmatrix <- stats::cophenetic(Frug_treeUlt) 
+dmatrix <- dmatrix/max(dmatrix) 
+
+#String manipulation so tree tip names match
+dat$plant_Tips <- gsub(pattern=" ", replace="_", x=dat$Plant_Species) 
+#Only include plant species for which phylogenetic info is available
+dat_phylo <- dplyr::filter(dat, plant_Tips %in% BIEN_subtree$tip.label) 
+
+comm <- as.data.frame.matrix(table(dat_phylo$Frugivore_Species, dat_phylo$plant_Tips))#Binary, unweighted intraction matrix.
+#The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
+frugivore_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+```
+```
+
+
+
+
+
 
 ## Looking at Animal Traits (Plant Specialism)
 This is something we can revisit down the line if we want, but we're somewhat data limited right now. For now, we'll focus on plant traits, as the active choice of who to interact with is being made by the animal anyways, so specialism-generalism seems bit more relevant from that side. 
@@ -835,86 +954,91 @@ First, let's work on our climate data features.
 ```
 
 
-First, make a function to train Maxent
+
+
+
+
 ```{r}
-Occ <- read.csv(file="data/GBIF/occs/coereba_flaveola.csv")
-Occ <- Occ[sample(1:nrow(Occ), 10000, replace = F),]  #subsampling to make it easier to work with
+library(terra)
 
-trainMaxent <- function(Occ, seed=1, split=0.75, sp="SpeciesName", cropextent=c(-80,-35,-60,5)){
-    Occ <- as.data.frame(Occ)
-    Occ <- dplyr::select(Occ, species, decimallongitude, decimallatitude) %>% unique() #remove redundant records
-    Occ['cells']<-terra::cellFromXY(object= Clima[[1]], xy = Occ[,2:3]) #Grab the occurrence cells
-    
-    Occ <- Occ %>% dplyr::group_by(cells) %>%
-      slice_sample() #Grab one unique coordinate from each cell
-    
-    #creating a 200km2 buffer to select the psudo-absence points
-    
-    OccTerra <- terra::vect(x=Occ[,2:3], crs = "+proj=longlat +datum=WGS84") #Create SpatVector object 
-    OccBuffer <- terra::buffer(OccTerra, width=200000) #Create 200km buffer
-    
-    OccBuffer<- terra::aggregate(OccBuffer) #Merge buffer objects into 
+# Training presence coordinates
+train_pres_xy <- Occurrences[id.training, c("Long", "Lat")]
 
-    OccBufferRas <-terra::rasterize(x = OccBuffer, y=Clima) #snap to Clima grid
-    OccBufferRas <-raster::mask(x = OccBufferRas, mask = Clima[[1]]) #Mask to remove oceanic points within the buffer. 
-    
-    ##Selecting the potential pseudo absence sites
-    AllPseudo <- terra::as.points(OccBufferRas)
-    AllPseudo <- raster::extract(x= Clima[[1]], AllPseudo[,1:2],cell=T)
-    AllPseudo <-AllPseudo[-(which(AllPseudo$cell%in%Occ$cells)),] #remove true presence from potential psuedo points
-    
-    #Actually sample psuedoabsences
-    set.seed(seed)
-    PseudoA<-sample(x = AllPseudo$cell, size = nrow(Occ)) #Sample a number of psuedoA equal to # of occurances
-    PseudoA<-as.data.frame(raster::xyFromCell(object = Clima[[1]], cell = PseudoA)) #Make a df
-    
-    #Now, train a Maxent model
-    Occurrences<-cbind(Occ[,2:3], PseudoA[,1:2]) #bind into 4 cols; left is real, right is associated psuedo
-    colnames(Occurrences)<-c('Long','Lat','Long_Psuedo','Lat_Psuedo')
-    
-    id.training<-sample(1:nrow(Occurrences), round(split*nrow(Occurrences),0)) #create test-train split (split=percent train)
-    training <- dismo::prepareData(x=raster.comb, p=Occurrences[id.training,c("Long", "Lat")], b=Occurrences[id.training,c("Long_Psuedo", "Lat_Psuedo")])  #Use dismo prepare data to set up df
-    testing<-dismo::prepareData(x=raster.comb, p=Occurrences[-id.training,c("Long", "Lat")], b=Occurrences[-id.training,c("x", "y")])    
-    training<-na.omit(training)
-    testing<-na.omit(testing)
-      
-    colnames(Occurrences)<-rep(c('Long','Lat'),2) #Change names
-    testingPresPA<-rbind.data.frame(Occurrences[-id.training,1:2],Occurrences[-id.training,3:4])
-    
-          ##Maxent
-    Sys.setenv(NOAWT=TRUE)
-    Maxent.Model <-dismo::maxent(x = as.data.frame(training[,-1]), p = as.data.frame(training[,1])) #Train Maxent Model
-    
-    
-    Maxent.0  <-dismo::predict(object = Maxent.Model, x = raster.comb, args='outputformat=cloglog') #Predict suitability according to trained model
-    Maxent.eval<-evaluate(p = testing[testing[,"pb"]==1,-1], a = testing[testing[,"pb"]==0,-1], model = Maxent.Model)
+# Training pseudo-absence/background coordinates
+train_abs_xy <- Occurrences[id.training, c("Long_Psuedo", "Lat_Psuedo")]
 
-    
-    Max0cut <- Maxent.0
-    Max0cut <- terra::crop(x=Max0cut, y=cropextent) #Crop the predicted model to smaller extent
-    
-    output <- list(prediction=Max0cut, eval=Maxent.eval, sp=sp)
-    return(output)
-}    
+# Convert to spatial vectors
+train_pres_pts <- terra::vect(
+  train_pres_xy,
+  geom = c("Long", "Lat"),
+  crs = terra::crs(Maxent.0)
+)
+
+train_abs_pts <- terra::vect(
+  train_abs_xy,
+  geom = c("Long_Psuedo", "Lat_Psuedo"),
+  crs = terra::crs(Maxent.0)
+)
+
+pdf(file="Bannanaquit_Example.pdf", width=11, height = 8.5)
+# Plot suitability
+plot(Maxent.0, main = "MaxEnt suitability with training points")
+
+# Add pseudo-absence/background points first
+terra::points(
+  train_abs_pts,
+  pch = 1,
+  col = "gray",
+  cex = 0.6,
+  alpha=0.6
+)
+
+# Add presence points on top
+terra::points(
+  train_pres_pts,
+  pch = 16,
+  col = "red",
+  cex = 0.7,
+  alpha=0.5
+)
+
+legend(
+  "topright",
+  legend = c("Training presence", "Training pseudo-absence"),
+  pch = c(16, 1),
+  col = c("red", "gray"),
+  bty = "n",
+  bg = "white"
+)
+dev.off()
+
+
+pdf(file="Bannanaquit_blank.pdf", width=11, height = 8.5)
+# Plot suitability
+plot(Maxent.0)
+dev.off()
 ```
 
 Perform a PCA on our environmental data to grab some predictors
 ```{r}
 Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
-Clima <- terra::crop(Clima, ext(-180, 180, -66.563, 66.563)) #Excluding the artic circle. No points up there, and we can hopefully get a better characterization of the remaining climatic variation
 vals <- as.data.frame(Clima, na.rm = TRUE)
 pca <- prcomp(vals, center = TRUE, scale = TRUE)
 
 Clima_pca <- terra::predict(
   Clima,
   pca,
-  index = 1:8,
-  filename = "Clima_PCA_1to8.tif",
+  index = 1:4,
+  filename = "Clima_PCA_1to4.tif",
   overwrite = TRUE
 )
 
-names(Clima_pca) <- paste0("PC", 1:nlyr(Clima_pca))
+PCA <- terra::rast("worldclim/Clima_PCA_1to8.tif")
 ```
 
+
+```{r}
+
+```
 
 
