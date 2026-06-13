@@ -420,8 +420,6 @@ Creating Conceptual figure inset files
 ```{r}
 #png(file="Figures/ToucanOcc.png", width=480, height=480)
 
-
-
 SA <- ne_countries(scale = "medium",continent = "South America",  returnclass = "sv")
 
 #dev.off()
@@ -553,7 +551,6 @@ intOcc$p <- 1
 composite <- intOcc %>% dplyr::select(., -inter) %>% rbind(., psadd)
 
 interOC <- pROC::roc(data=composite, response=p, predictor=S)
-interOC
 ```
 
 Here: Messing around with iNat data

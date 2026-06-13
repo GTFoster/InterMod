@@ -17,6 +17,7 @@ library(picante)
 library(ape)
 library(phytools)
 library(stringr)
+library(lme4)
 ```
 
 
@@ -879,6 +880,8 @@ FrugPartners$sp <- word(FrugPartners$Plant_Species, 2, 2)
 
 BIEN_tree <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 1, seed=1, replicates = 10)
 
+
+
 FrugPlants <- FrugPartners %>%
   filter(!str_detect(sp, "\\d")) %>% 
   dplyr::select(., Plant_Species, genera, sp) %>% 
@@ -899,15 +902,16 @@ BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(FrugP
 #FrugPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
 #FrugPlant_tree <- force.ultrametric(FrugPlant_tree)
 
-FrugPartners$Plant_Species
-FrugPartners$matchname <- gsub(" ", "_",FrugPartners$Plant_Species)
 
+FrugPartners$matchname <- gsub(" ", "_",FrugPartners$Plant_Species)
+```
+
+```{r, eval=FALSE}
 #Grab our set of species missing from the BIEN tree
 miss <- FrugPartners %>% 
   dplyr::select(Plant_Species, genera, matchname) %>% 
   unique() %>%
   dplyr::filter(., matchname %in% Frug_treeUlt$tip.label==F)
-
 
 #Cycle through missing and, if it has a congeneric, add it to the tree. 
 for(i in 1:nrow(miss)){
@@ -930,13 +934,12 @@ BIEN_plantkeep$genera <- BIEN_plantkeep$tip %>%
 
 BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(PollPartners$genera))) #Filtering out all species without congenerics in our frugivore dataset
 PollPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
+PollPartners$matchname <- gsub(" ", "_",PollPartners$Plant_Species)
 #save(FrugPlant_tree, PollPlant_tree, file="nonRoundedTrees.RDA")
 ```
 
-
-Adding in congenerics as polytomies
-```{r}
-PollPartners$matchname <- gsub(" ", "_",PollPartners$Plant_Species)
+Adding in congenerics as polytomies for pollinators
+```{r, eval=FALSE}
 
 #Grab our set of species missing from the BIEN tree
 miss <- PollPartners %>% 
@@ -960,13 +963,14 @@ for(i in 1:nrow(miss)){
 ```
 
 ```{r}
-table(PollPartners$matchname %in% PollPlant_treeUlt$tip.label)
-table(FrugPartners$matchname %in% Frug_treeUlt$tip.label)
 ```
 
 
-Calculating phylogenetic specificity
+Calculating phylogenetic specificity. 
+First for pollinators. 
 ```{r}
+#table(PollPartners$matchname %in% PollPlant_treeUlt$tip.label)
+#table(FrugPartners$matchname %in% Frug_treeUlt$tip.label)
 dmatrix <- stats::cophenetic(PollPlant_treeUlt) 
 dmatrix <- dmatrix/max(dmatrix)
 
@@ -974,21 +978,24 @@ Pollsub <- dplyr::filter(PollPartners, matchname %in% PollPlant_treeUlt$tip.labe
 comm <- as.data.frame.matrix(table(Pollsub$visitor, Pollsub$matchname))#Binary, unweighted intraction matrix.
 #The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
 poll_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+
+poll_mpd$visitor <- rownames(poll_mpd)
+
+PollPartners <- left_join(PollPartners, poll_mpd, by="visitor")
 ```
 
 
-```{r}
+This is big to run on our computer. 
+```{r, eval=FALSE}
+save(file="Frugcophonetic.RDA", Frug_treeUlt, FrugPartners)
 dmatrix <- stats::cophenetic(Frug_treeUlt) 
 dmatrix <- dmatrix/max(dmatrix)
 
 Frugsub <- dplyr::filter(FrugPartners, matchname %in% Frug_treeUlt$tip.label)
 comm <- as.data.frame.matrix(table(Frugsub$Frugivore_Species, Frugsub$matchname))#Binary, unweighted intraction matrix.
 #The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
-poll_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+frug_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
 ```
-
-
-
 
 
 
@@ -1000,14 +1007,112 @@ Frugivore Traits (AvoNet)
 # Creating SDMS
   Next steps + thoughts: perform PCA on smaller extent. Also do on icebox, or just do a subset. 
 First, let's work on our climate data features. 
-```{r}
 
+We do this in the file SDM_Replicate.R
+Maybe add a bash block that just Rscripts this file? Probs best approach for reproduciability without having to recombine?
+
+Looking at the results of our SDM overlaps
+
+For each species pair we want to 
+1) Load in both SDMS
+2) Do Pairwise multiplacation of suitability for overlap
+3) Make some background occurence points
+4) Test performance of overlap model on those bg points
+```{r}
+dat$suit <- NA
+
+for(i in 1:length(unique(dat$speciesPair))){
+  current <- dplyr::filter(dat, speciesPair==unique(dat$speciesPair)[i])
+  plantnm <- current$Plant_Species[1]
+  aniname <- current$Animal_Species[1]
+  #setting the filenames
+  plantfil <- paste("suitabilityOutputs/", gsub(" ", "_", tolower(plantnm)),".tif", sep="")
+  anfil <- paste("suitabilityOutputs/", gsub(" ", "_", tolower(aniname)),".tif", sep="")
+  
+  #Grabbing the relevant sdm outputs
+  plantrast <- try(terra::rast(plantfil))
+  anrast <- try(terra::rast(anfil))
+  if("try-error" %in% c(class(plantrast), class(anrast))){
+    next
+  }
+  
+  #Create overlap suitability through pairwise multiplication
+  pred <- plantrast*anrast
+  
+  #Extract the suitability values of our cooccurence points
+  dat$suit[dat$speciesPair==unique(dat$speciesPair)[i]] <-  terra::extract(pred, current[c("Longitude", "Latitude")])[,2]
+  if(i%%10==0){
+    print(i) #print updates every 10 steps
+  }
+  #save(file="predprogress.RDA", i, dat)
+  rm(plantrast, anrast)
+  gc()
+}
 ```
 
 
 
 
+Now looking at performance on our overlapping points. 
+```{r}
+ret <- NULL
 
+for(pair in unique(dat$speciesPair)){
+  temp <- dplyr::filter(dat, speciesPair==pair)
+  if(is.na(temp$suit)[1]==TRUE){
+    next
+  }
+  areaUC <- modEvA::AUC(obs=temp$interaction, pred=temp$suit, plot=F)$AUC
+  Thresh <- optiThresh(obs = temp$interaction, pred = temp$suit, measures = c("TSS", "kappa", "CCR"), plot=F)$optimals.each
+  Thresh <- Thresh %>% dplyr::select(measure, value)
+  Thresh <- pivot_wider(Thresh, names_from=measure)
+  Bocce <- Boyce(obs = temp$interaction, pred = temp$suit, plot=F)$Boyce
+  temp <- data.frame(speciesPair=pair, Thresh, modAUC=areaUC, Boyce=Bocce)
+  ret <- rbind(ret, temp)
+}
+
+dat <- left_join(dat, ret, by="speciesPair")
+```
+
+
+```{r}
+poltest <- dplyr::filter(dat, Animal_Species %in% PollPartners$visitor)
+
+poltest <- PollPartners %>% dplyr::select(., -network_name, -connection_strength) %>% 
+  dplyr::rename(., "Animal_Species"=visitor) %>%
+  left_join(poltest, ., by=join_by(Animal_Species, Plant_Species))
+
+poltest <- poltest %>%
+  mutate(
+    siteID = cur_group_id(),
+    .by = c(Longitude, Latitude)
+  )
+```
+
+Modeling. 
+```{r}
+library(lme4)
+colnames(poltest)
+mod <- glmer(formula=interaction~suit*mpd.obs.z+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=poltest, family="binomial")
+summary(mod)
+
+sjPlot::plot_model(mod,
+                   show.p=TRUE)+theme_classic()
+
+sjPlot::tab_model(mod, 
+                  show.re.var= TRUE)
+  
+library(broom.mixed)
+
+fixef_df <- tidy(
+  mod,
+  effects = "fixed",
+  conf.int = TRUE
+)
+```
+
+
+#Scratch Work: Querying + SDMS
 
 ```{r}
 library(terra)
