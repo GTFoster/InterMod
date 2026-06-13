@@ -374,7 +374,6 @@ GIFT_Traits <- GIFT_traits(
   api = "https://gift.uni-goettingen.de/api/extended/",
   GIFT_version = "latest"
 )
-GIFT_query$
 
 GIFT_Traits <- dplyr::filter(GIFT_Traits, work_species %in% plants)
 ```
@@ -867,17 +866,18 @@ focal <- c(unique(dat$Animal_Species), unique(dat$Plant_Species))
 
 Determining Phylogenetic specificity of animal pollinators/dispersers
 
-START HERE: ADDING POLYTOMIES
-Fruiting Plants
+```{r}
+load(file="UltTrees.RDA")
+```
+
+Fruiting plants
 ```{r}
 FrugPartners$Plant_Species[FrugPartners$Plant_Species=="Garcinia king\xe4ensis"] <- "Garcinia kingaensis"
 
-FrugPartners$Plant_Species
 FrugPartners$genera <- word(FrugPartners$Plant_Species, 1, 1)
 FrugPartners$sp <- word(FrugPartners$Plant_Species, 2, 2)
 
 BIEN_tree <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 1, seed=1, replicates = 10)
-
 
 FrugPlants <- FrugPartners %>%
   filter(!str_detect(sp, "\\d")) %>% 
@@ -896,8 +896,26 @@ BIEN_plantkeep$genera <- BIEN_plantkeep$tip %>%
 
 BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(FrugPlants$genera))) #Filtering out all species without congenerics in our frugivore dataset
 
-FrugPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
+#FrugPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
 #FrugPlant_tree <- force.ultrametric(FrugPlant_tree)
+
+FrugPartners$Plant_Species
+FrugPartners$matchname <- gsub(" ", "_",FrugPartners$Plant_Species)
+
+#Grab our set of species missing from the BIEN tree
+miss <- FrugPartners %>% 
+  dplyr::select(Plant_Species, genera, matchname) %>% 
+  unique() %>%
+  dplyr::filter(., matchname %in% Frug_treeUlt$tip.label==F)
+
+
+#Cycle through missing and, if it has a congeneric, add it to the tree. 
+for(i in 1:nrow(miss)){
+  if(tolower(miss$genera[i]) %in% BIEN_plantkeep$genera){
+    print(i)
+    Frug_treeUlt <- phytools::add.species.to.genus(tree=Frug_treeUlt, species=miss$matchname[i], where="root")
+  }
+}
 ```
 
 Flowering Plants
@@ -915,25 +933,58 @@ PollPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
 #save(FrugPlant_tree, PollPlant_tree, file="nonRoundedTrees.RDA")
 ```
 
+
+Adding in congenerics as polytomies
 ```{r}
-load(file="Ult_trees.RDA")
+PollPartners$matchname <- gsub(" ", "_",PollPartners$Plant_Species)
+
+#Grab our set of species missing from the BIEN tree
+miss <- PollPartners %>% 
+  dplyr::select(Plant_Species, genera, matchname) %>% 
+  unique() %>%
+  dplyr::filter(., matchname %in% PollPlant_tree$tip.label==F)
+
+
+#Cycle through missing and, if it has a congeneric, add it to the tree. 
+for(i in 1:nrow(miss)){
+  if(tolower(miss$genera[i]) %in% BIEN_plantkeep$genera){
+    print(i)
+    PollPlant_treeUlt <- phytools::add.species.to.genus(tree=PollPlant_treeUlt, species=miss$matchname[i], where="root")
+  }
+}
 ```
 
+
+```{r}
+#save(file="PolytomyTrees.RDA",Frug_treeUlt, PollPlant_treeUlt)
+```
+
+```{r}
+table(PollPartners$matchname %in% PollPlant_treeUlt$tip.label)
+table(FrugPartners$matchname %in% Frug_treeUlt$tip.label)
+```
+
+
+Calculating phylogenetic specificity
+```{r}
+dmatrix <- stats::cophenetic(PollPlant_treeUlt) 
+dmatrix <- dmatrix/max(dmatrix)
+
+Pollsub <- dplyr::filter(PollPartners, matchname %in% PollPlant_treeUlt$tip.label)
+comm <- as.data.frame.matrix(table(Pollsub$visitor, Pollsub$matchname))#Binary, unweighted intraction matrix.
+#The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
+poll_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
+```
 
 
 ```{r}
 dmatrix <- stats::cophenetic(Frug_treeUlt) 
-dmatrix <- dmatrix/max(dmatrix) 
+dmatrix <- dmatrix/max(dmatrix)
 
-#String manipulation so tree tip names match
-dat$plant_Tips <- gsub(pattern=" ", replace="_", x=dat$Plant_Species) 
-#Only include plant species for which phylogenetic info is available
-dat_phylo <- dplyr::filter(dat, plant_Tips %in% BIEN_subtree$tip.label) 
-
-comm <- as.data.frame.matrix(table(dat_phylo$Frugivore_Species, dat_phylo$plant_Tips))#Binary, unweighted intraction matrix.
+Frugsub <- dplyr::filter(FrugPartners, matchname %in% Frug_treeUlt$tip.label)
+comm <- as.data.frame.matrix(table(Frugsub$Frugivore_Species, Frugsub$matchname))#Binary, unweighted intraction matrix.
 #The main function. Randomly swap tip labels 999 times and see whether the observed sets of plant interactors for each species is more phylogenetically clustered than this assumed distribution
-frugivore_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
-```
+poll_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abundance.weighted=FALSE, runs = 999, iterations = 1000) 
 ```
 
 
