@@ -50,8 +50,6 @@ panels$lat_max <- lat_breaks[panels$lat_i + 1]
 panels$lon_min <- lon_breaks[panels$lon_i]
 panels$lon_max <- lon_breaks[panels$lon_i + 1]
 
-panels
-
 #keyquery <- keyquery |>
 #  dplyr::arrange(n) #start with smallest first and go up from there
 #for(j in idex[-length(idex)]){
@@ -66,12 +64,25 @@ for (p in seq_len(nrow(panels))) {
     #keystemp <- keyquery$key[(j+1):(j+5)]
     keystemp <- keyquery$key[j]
     Sys.time()
-      spdat <- gbif |> 
-        #filter(taxonkey %in% key) |> 
-        filter(taxonkey %in% keystemp) |> 
-        filter(decimallatitude > 0 & decimallongitude > 0) |>
-        collect() #Grab all occurence records for the species of interest and call is spdat, using our backbone key to search
-      Sys.time()
+    
+    spdat <- gbif |> 
+      filter(taxonkey %in% keystemp) |> 
+      filter(
+        !is.na(decimallatitude),
+        !is.na(decimallongitude),
+        decimallatitude >= lat_min,
+        decimallatitude <  lat_max,
+        decimallongitude >= lon_min,
+        decimallongitude <  lon_max
+      ) |>
+      collect()
+    
+    if (nrow(spdat) == 0) {
+      print(paste("no records for key", j, "panel", p))
+      rm(spdat)
+      gc()
+      next
+    }
       spdat <- dplyr::filter(spdat, is.na(decimallongitude)==F) #remove recs without latlong
       
       spdat <- spdat %>% #Do some data cleaning
@@ -93,9 +104,9 @@ for (p in seq_len(nrow(panels))) {
       #subset across species and save into seperate files
       filname <- keyquery$name[j] %>% tolower() %>% gsub(pattern=" ", replacement="_",.) %>%
         paste("data/GBIF/occs/", ., "_panel", p, ".csv", sep="") #Create a filename
-      write.csv(tempocc, file=filname, row.names = FALSE) 
+      write.csv(occs, file=filname, row.names = FALSE) 
       print(paste("done with", j, sep=" "))
-      rm(occs, tempocc)
+      rm(occs)
       gc()
   }
 }

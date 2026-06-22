@@ -878,9 +878,9 @@ FrugPartners$Plant_Species[FrugPartners$Plant_Species=="Garcinia king\xe4ensis"]
 FrugPartners$genera <- word(FrugPartners$Plant_Species, 1, 1)
 FrugPartners$sp <- word(FrugPartners$Plant_Species, 2, 2)
 
-BIEN_tree <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 1, seed=1, replicates = 10)
-
-
+BIEN_trees <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 100, seed=1)
+majority_tree <- ape::consensus(BIEN_trees, p=0.5)
+save(majority_tree, file="consensuTree.RDA")
 
 FrugPlants <- FrugPartners %>%
   filter(!str_detect(sp, "\\d")) %>% 
