@@ -18,6 +18,8 @@ library(ape)
 library(phytools)
 library(stringr)
 library(lme4)
+library(broom.mixed)
+library(modEvA)
 ```
 
 
@@ -902,7 +904,6 @@ BIEN_plantkeep <- dplyr::filter(BIEN_plantkeep, genera %in% tolower(unique(FrugP
 #FrugPlant_tree <- ape::keep.tip(BIEN_tree, BIEN_plantkeep$tip)
 #FrugPlant_tree <- force.ultrametric(FrugPlant_tree)
 
-
 FrugPartners$matchname <- gsub(" ", "_",FrugPartners$Plant_Species)
 ```
 
@@ -962,8 +963,6 @@ for(i in 1:nrow(miss)){
 #save(file="PolytomyTrees.RDA",Frug_treeUlt, PollPlant_treeUlt)
 ```
 
-```{r}
-```
 
 
 Calculating phylogenetic specificity. 
@@ -999,6 +998,14 @@ frug_mpd <- picante::ses.mpd(comm, dmatrix, null.model = "independentswap", abun
 
 
 
+```{r}
+load(file="frug_mpd.RDA")
+
+frug_mpd$Frugivore_Species <- rownames(frug_mpd)
+FrugPartners <- left_join(FrugPartners, frug_mpd, by="Frugivore_Species")
+```
+
+
 ## Looking at Animal Traits (Plant Specialism)
 This is something we can revisit down the line if we want, but we're somewhat data limited right now. For now, we'll focus on plant traits, as the active choice of who to interact with is being made by the animal anyways, so specialism-generalism seems bit more relevant from that side. 
 Pollinator Traits
@@ -1016,9 +1023,10 @@ Looking at the results of our SDM overlaps
 For each species pair we want to 
 1) Load in both SDMS
 2) Do Pairwise multiplacation of suitability for overlap
-3) Make some background occurence points
 4) Test performance of overlap model on those bg points
-```{r}
+
+We do steps 1 and 2 below
+```{r, eval=FALSE}
 dat$suit <- NA
 
 for(i in 1:length(unique(dat$speciesPair))){
@@ -1051,19 +1059,17 @@ for(i in 1:length(unique(dat$speciesPair))){
 ```
 
 
-
-
-Now looking at performance on our overlapping points. 
+Now looking at performance on our overlapping points (step 3)
 ```{r}
+load(file="predprogress.RDA")
 ret <- NULL
-
 for(pair in unique(dat$speciesPair)){
   temp <- dplyr::filter(dat, speciesPair==pair)
   if(is.na(temp$suit)[1]==TRUE){
     next
   }
   areaUC <- modEvA::AUC(obs=temp$interaction, pred=temp$suit, plot=F)$AUC
-  Thresh <- optiThresh(obs = temp$interaction, pred = temp$suit, measures = c("TSS", "kappa", "CCR"), plot=F)$optimals.each
+  Thresh <- modEvA::optiThresh(obs = temp$interaction, pred = temp$suit, measures = c("TSS", "kappa", "CCR"), plot=F)$optimals.each
   Thresh <- Thresh %>% dplyr::select(measure, value)
   Thresh <- pivot_wider(Thresh, names_from=measure)
   Bocce <- Boyce(obs = temp$interaction, pred = temp$suit, plot=F)$Boyce
@@ -1074,7 +1080,15 @@ for(pair in unique(dat$speciesPair)){
 dat <- left_join(dat, ret, by="speciesPair")
 ```
 
+```{r}
+dat <- dat %>% dplyr::select(., Plant_Species, Animal_Species) %>% 
+  unique() %>%
+  count(, Animal_Species) %>%
+  left_join(dat, ., by="Animal_Species") %>%
+  dplyr::rename(., "npartners"="n")
+```
 
+Let's look at performance
 ```{r}
 poltest <- dplyr::filter(dat, Animal_Species %in% PollPartners$visitor)
 
@@ -1087,114 +1101,219 @@ poltest <- poltest %>%
     siteID = cur_group_id(),
     .by = c(Longitude, Latitude)
   )
+
+frugtest <- dplyr::filter(dat, Animal_Species %in% FrugPartners$Frugivore_Species)
+
+frugtest <- FrugPartners  %>% dplyr::select(., Frugivore_Species, mpd.obs, mpd.rand.mean, mpd.rand.sd, mpd.obs.z, mpd.obs.p) %>% 
+  unique() %>%
+  dplyr::rename(., "Animal_Species"=Frugivore_Species) %>%
+  left_join(frugtest, ., by=join_by(Animal_Species))
+
+frugtest <- frugtest %>%
+  mutate(
+    siteID = cur_group_id(),
+    .by = c(Longitude, Latitude)
+  )
 ```
 
-Modeling. 
+
+Modeling.
+First, phylo model
 ```{r}
-library(lme4)
-colnames(poltest)
-mod <- glmer(formula=interaction~suit*mpd.obs.z+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=poltest, family="binomial")
-summary(mod)
+poll_phylomod <- glmer(formula=interaction~suit*mpd.obs.z+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=poltest, family="binomial")
+#summary(poll_phylomod)
 
-sjPlot::plot_model(mod,
-                   show.p=TRUE)+theme_classic()
-
-sjPlot::tab_model(mod, 
-                  show.re.var= TRUE)
-  
-library(broom.mixed)
-
-fixef_df <- tidy(
-  mod,
-  effects = "fixed",
+#extract effect estimates & coeffiecients using broom.mixed
+  #For poll phylo
+effects <- broom.mixed::tidy(
+  poll_phylomod,
   conf.int = TRUE
 )
+effects$class <- "Poll"
+effects$model <- "Phylo"
+
+modEffects <- effects
+
+#sjPlot::plot_model(poll_phylomod)
+sjPlot::tab_model(poll_phylomod)
+
+frug_phylomod <- glmer(formula=interaction~suit*mpd.obs.z+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=frugtest, family="binomial")
+summary(frug_phylomod)
+
+#sjPlot::plot_model(frug_phylomod)
+
+effects <- broom.mixed::tidy(
+  frug_phylomod,
+  conf.int = TRUE
+)
+effects$class <- "Frug"
+effects$model <- "Phylo"
+
+modEffects <- rbind(effects, modEffects)
+sjPlot::tab_model(frug_phylomod)
+
+```
+
+Now, basis specificity
+```{r}
+poll_basemod <- glmer(formula=interaction~suit*npartners+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=poltest, family="binomial")
+summary(poll_basemod)
+
+#extract effect estimates & coeffiecients using broom.mixed
+  #For poll phylo
+effects <- broom.mixed::tidy(
+  poll_basemod,
+  conf.int = TRUE
+)
+effects$class <- "Poll"
+effects$model <- "Basis"
+
+modEffects <- rbind(effects, modEffects)
+sjPlot::tab_model(poll_basemod)
+#sjPlot::plot_model(poll_basemod)
+
+frug_basemod <- glmer(formula=interaction~suit*npartners+(1|Plant_Species)+(1|Animal_Species)+(1|siteID)+(1|speciesPair), data=frugtest, family="binomial")
+summary(frug_basemod)
+sjPlot::tab_model(frug_basemod)
+
+#sjPlot::plot_model(frug_phylomod)
+
+effects <- broom.mixed::tidy(
+  frug_basemod,
+  conf.int = TRUE
+)
+effects$class <- "Frug"
+effects$model <- "Basis"
+
+modEffects <- rbind(effects, modEffects)
 ```
 
 
-#Scratch Work: Querying + SDMS
+```{r}
+plot_df <- modEffects %>%
+  filter(effect == "fixed") %>%
+  filter(term != "(Intercept)") %>%
+  filter(!is.na(conf.low), !is.na(conf.high)) %>%
+  mutate(
+    class_model = paste(class, model, sep = " - "),
+    term = as.character(term)
+  )
+
+plot_df$term[plot_df$term %in% c("npartners", "mpd.obs.z")] <- "Generalism"
+plot_df$term[plot_df$term %in% c("suit:mpd.obs.z", "suit:npartners")] <- "Interaction"
+plot_df$term[plot_df$term %in% c("suit")] <- "Suitability Overlap"
+
+plot_df$sig <- 0
+plot_df$sig[plot_df$p.value<0.05] <- 1
+```
+
 
 ```{r}
-library(terra)
-
-# Training presence coordinates
-train_pres_xy <- Occurrences[id.training, c("Long", "Lat")]
-
-# Training pseudo-absence/background coordinates
-train_abs_xy <- Occurrences[id.training, c("Long_Psuedo", "Lat_Psuedo")]
-
-# Convert to spatial vectors
-train_pres_pts <- terra::vect(
-  train_pres_xy,
-  geom = c("Long", "Lat"),
-  crs = terra::crs(Maxent.0)
-)
-
-train_abs_pts <- terra::vect(
-  train_abs_xy,
-  geom = c("Long_Psuedo", "Lat_Psuedo"),
-  crs = terra::crs(Maxent.0)
-)
-
-pdf(file="Bannanaquit_Example.pdf", width=11, height = 8.5)
-# Plot suitability
-plot(Maxent.0, main = "MaxEnt suitability with training points")
-
-# Add pseudo-absence/background points first
-terra::points(
-  train_abs_pts,
-  pch = 1,
-  col = "gray",
-  cex = 0.6,
-  alpha=0.6
-)
-
-# Add presence points on top
-terra::points(
-  train_pres_pts,
-  pch = 16,
-  col = "red",
-  cex = 0.7,
-  alpha=0.5
-)
-
-legend(
-  "topright",
-  legend = c("Training presence", "Training pseudo-absence"),
-  pch = c(16, 1),
-  col = c("red", "gray"),
-  bty = "n",
-  bg = "white"
-)
+pdf(file="Figures/Panel_Effects.pdf", width=7, height=3)
+ggplot(
+  plot_df,
+  aes(
+    x = estimate,
+    y = class_model
+  )
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmin = conf.low, xmax = conf.high),
+    height = 0.2
+  ) +
+  geom_point(aes(shape=as.factor(sig)), size = 2, show.legend = FALSE) +
+  labs(
+    x = "Effect size (Log odds ratio)"
+  )+
+  scale_shape_manual(values = c(1,16))+
+  scale_y_discrete(
+  labels = c(
+    "Poll - Phylo" = "Pollinators \n Phylogenetic Specificity",
+    "Poll - Basis" = "Pollinator\nDegree Specificity",
+    "Frug - Phylo" = "Frugivore \n Phylogenetic Specificity",
+    "Frug - Basis" = "Frugivore \nDegree Specificity"
+  )
+)+
+  theme_bw()+
+  facet_wrap(~ factor(term, levels=c("Suitability Overlap", "Generalism", "Interaction")))+
+theme(axis.title.y =element_blank())
 dev.off()
-
-
-pdf(file="Bannanaquit_blank.pdf", width=11, height = 8.5)
-# Plot suitability
-plot(Maxent.0)
-dev.off()
 ```
 
-Perform a PCA on our environmental data to grab some predictors
+Single plot version
+```{r, eval=FALSE}
+#pdf(file="Figures/LogitModel_Effects.pdf", width=7, height=3)
+ggplot(
+  plot_df,
+  aes(
+    x = estimate,
+    y = class_model,
+    color=term
+  )
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmin = conf.low, xmax = conf.high),
+    height = 0.5, position=position_dodge(.9)
+  ) +
+  geom_point(aes(shape=as.factor(sig)), size = 3, position=position_dodge(.9), show.legend = FALSE) +
+  labs(
+    x = "Effect size (Log odds ratio)",
+    y = "Model"
+  )+
+  scale_shape_manual(values = c(1,16))+
+  scale_y_discrete(
+  labels = c(
+    "Poll - Phylo" = "Pollinators; Phylogenetic Specificity",
+    "Poll - Basis" = "Pollinators;  Basis Specificity",
+    "Frug - Phylo" = "Frugivores;  Phylogenetic Specificity",
+    "Frug - Basis" = "Frugivores;  Basis Specificity"
+  )
+)+
+  theme_bw()
+#dev.off()
+```
+
+Calculating RMSE
 ```{r}
-Clima <- geodata::worldclim_global("worldclim", var="bio", res=2.5)
-vals <- as.data.frame(Clima, na.rm = TRUE)
-pca <- prcomp(vals, center = TRUE, scale = TRUE)
+x <- dat %>% dplyr::group_by(speciesPair) %>% 
+  dplyr::mutate(error=abs(suit-interaction)) %>% 
+  dplyr::summarise(RMSE=sqrt(sum(error^2)/n())) %>%
+  left_join(poltest, ., by = join_by(speciesPair))%>% 
+  dplyr::select(speciesPair, Animal_Species, Plant_Species, TSS, modAUC, RMSE, mpd.obs.z, npartners) %>%
+  unique() %>% dplyr::mutate(type="poll")
 
-Clima_pca <- terra::predict(
-  Clima,
-  pca,
-  index = 1:4,
-  filename = "Clima_PCA_1to4.tif",
-  overwrite = TRUE
-)
 
-PCA <- terra::rast("worldclim/Clima_PCA_1to8.tif")
+y <- dat %>% dplyr::group_by(speciesPair) %>% 
+  dplyr::mutate(error=abs(suit-interaction)) %>% 
+  dplyr::summarise(RMSE=sqrt(sum(error^2)/n())) %>%
+  left_join(frugtest, ., by = join_by(speciesPair)) %>% 
+  dplyr::select(speciesPair, Animal_Species, Plant_Species, TSS, modAUC, RMSE, mpd.obs.z, npartners) %>%
+  unique() %>% dplyr::mutate(type="frug")
+
+comb <- rbind(x,y)
 ```
 
 
 ```{r}
+colnames(comb)
+ggplot(data=comb, aes(x=mpd.obs.z, y=RMSE,col=type))+
+  geom_point()+geom_smooth(method="lm")+
+  theme_classic()+
+  xlab("Phylogenetic Generalism (z-score)")+
+  ylab("Overlap Model Performance (RMSE)")
 
+ggplot(data=comb, aes(x=npartners, y=RMSE,col=type))+
+  geom_point()+geom_smooth(method="lm")+
+  theme_classic()+
+  xlab("Basic Generalism (Degree)")+
+  ylab("Overlap Model Performance (RMSE)")
+
+cor.test(x$RMSE, x$mpd.obs.z, method="spearman")
+cor.test(x$RMSE, x$npartners, method="spearman")
+
+cor.test(y$RMSE, y$mpd.obs.z, method="spearman")
+cor.test(y$RMSE, y$npartners, method="spearman")
 ```
-
 
