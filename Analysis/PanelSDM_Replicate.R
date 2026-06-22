@@ -76,15 +76,15 @@ bigfiles <- files[grepl("panel", files)==TRUE]
 dfmap <- data.frame(bigfile=bigfiles, sp=sub("^(([^_]*_){1}[^_]*).*", "\\1", bigfiles))
 
 Occ <- NULL
-for(i in 1:length(unique(dfmap$sp))){
-  map <- dplyr::filter(dfmap, sp==unique(dfmap$sp[i]))
+for(i in 2:length(unique(dfmap$sp))){
+  map <- dplyr::filter(dfmap, sp==unique(dfmap$sp)[i])
   tifname <- paste("suitabilityOutputs/", map$sp[1], ".tif", sep="")
   for(j in 1:nrow(map)){
     Occ <- rbind(Occ, read.csv(file=paste("data/GBIF/occs/", map$bigfile[j], sep="")))
     print(j)
 }
   output <- trainMaxent(Occ, flnm=tifname)
-  sdmname <- gsub(".csv", ".RDA", nm) %>% paste("SdmOut/",., sep="")
+  sdmname <- paste("SdmOut/",map$sp[1], ".RDA", sep="")
   save(output, file=sdmname) 
   print(paste(i, "complete of ", length(files)))
 }

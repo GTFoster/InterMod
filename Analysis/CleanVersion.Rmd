@@ -879,16 +879,20 @@ FrugPartners$Plant_Species[FrugPartners$Plant_Species=="Garcinia king\xe4ensis"]
 
 FrugPartners$genera <- word(FrugPartners$Plant_Species, 1, 1)
 FrugPartners$sp <- word(FrugPartners$Plant_Species, 2, 2)
+```
 
+```{r, eval=FALSE}
 BIEN_trees <- BIEN::BIEN_phylogeny_complete(n_phylogenies = 100, seed=1)
 majority_tree <- ape::consensus(BIEN_trees, p=0.5)
-save(majority_tree, file="consensuTree.RDA")
+save(majority_tree, file="consensusTree.RDA")
+```
 
+```{r}
+load(file="consensuTree.RDA")
 FrugPlants <- FrugPartners %>%
   filter(!str_detect(sp, "\\d")) %>% 
   dplyr::select(., Plant_Species, genera, sp) %>% 
   unique()
-
 #hist(node.depth.edgelength(BIEN_tree)[seq_len(Ntip(BIEN_tree))]) #Tree is ultrametric, but just doesn't seem due to rounding errors. 
 #BIEN_tree <- force.ultrametric(BIEN_tree) #My big tree is too big to apply this to
 
